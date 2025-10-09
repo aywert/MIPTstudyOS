@@ -9,7 +9,7 @@ OBJFILES := main.o
 all: $(NAMEEXE)
 
 run: $(NAMEEXE)
-	./$(NAMEEXE) 10 4 7
+	./$(NAMEEXE) 3 4 5
 
 $(NAMEEXE) : $(OBJFILES) shower.h
 	$(CC) $(OBJFILES) -o $@ 

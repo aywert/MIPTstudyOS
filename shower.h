@@ -27,4 +27,4 @@ enum VisitorGender {
 int create_semaphore(const char* name, int flags, struct Shower_enjoers* st);
 void delete_semaphore(int semid);
 void init_processes(struct Shower_enjoers* st, int semid);
-void shower_visitor(int gender, int semid);
+void shower_visitor(int gender, int semid, int index);
