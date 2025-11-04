@@ -1,0 +1,1 @@
+MyWordCount - is a programm which counts number of lines, words, bytes read from the output of the another programm initiated as a child process.
