@@ -1,0 +1,1 @@
+MyBash is a replication of the shell. The programm is able to devide comand line on seperate processes: output of one process serves as an input for another. (via symbol '|').
