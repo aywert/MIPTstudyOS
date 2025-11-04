@@ -1,0 +1,1 @@
+MyPipeCat - its a replication of shell cat, which uses pipe between a parent and a child. Parent reads input, child outputs to stdout any data from pipe.
