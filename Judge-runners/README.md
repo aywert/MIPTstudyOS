@@ -1,0 +1,1 @@
+Judge-Runners - is a programm which simulates a real race using IPC AT&T Sys V. Judge and runners are seperate processes. Judge gives a start to a first runner, then first runners gives a "stick" to the next.
