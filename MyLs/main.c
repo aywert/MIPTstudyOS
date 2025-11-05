@@ -89,14 +89,17 @@ int main(int argc, char* argv[])
 
 void printdir(struct flags_in_line* status, DIR* d, char* name) {
   struct dirent* directories_index[256];
+  char buffer[1024] = {0};
   size_t index = 0;
 
   printf("%s:\n", name);
 
   struct dirent* e;
   while((e = readdir(d))!= NULL) {
+
+    snprintf(buffer, sizeof(buffer), "%s/%s", name, e->d_name);
     struct stat st;
-    stat(e->d_name, &st);
+    stat(buffer, &st);
     
     if(e->d_name[0] != '.')
     {
@@ -114,9 +117,14 @@ void printdir(struct flags_in_line* status, DIR* d, char* name) {
   
   if (status->recursive) {
     for (size_t j = 0; j < index; j++) {
-      DIR* d = opendir(directories_index[j]->d_name);
-      printdir(status, d, directories_index[j]->d_name);
-      closedir(d);
+      char buffer[1024];
+      snprintf(buffer, sizeof(buffer), "%s/%s", name, directories_index[j]->d_name);
+      
+      DIR* subdir = opendir(buffer);
+      if(subdir != NULL) {
+        printdir(status, subdir, buffer);
+        closedir(subdir);
+      }
     }
   }
 }
