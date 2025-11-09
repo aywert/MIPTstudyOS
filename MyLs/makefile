@@ -3,7 +3,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra
 
-NAMEEXE := main
+NAMEEXE := myls
 OBJFILES := main.o
 
 all: $(NAMEEXE)

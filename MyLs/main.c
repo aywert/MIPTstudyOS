@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <stdbool.h> 
+#include <errno.h>
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -37,7 +38,8 @@ struct flags_in_line {
   bool recursive;
 };
 
-void printdir(struct flags_in_line* status, DIR* d, char* name);
+void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_header);
+int fill_dir_array_and_print_files(char* argv[], int argc, int* dir_array);
 
 int main(int argc, char* argv[])
 {
@@ -65,66 +67,101 @@ int main(int argc, char* argv[])
     }
   }
 
-  printf("optind = %d\n", optind);
+  //printf("optind = %d\n", optind);
   if (argc-optind == 0) {
     DIR* d = opendir(".");
-    if (d == NULL) perror("mistake");
+    if (d == NULL) perror("mistake in opendir");
   
-    printdir(&status, d, ".");
+    printdir(&status, d, ".", false);
     closedir(d);
     return 0;
   }
 
- 
-  for (int i = 1; i < argc-optind+1; i++) {
-    printf("%s ", argv[i]);
-  }
-  printf("\n");
+  int dir_array[258];
+  int dir_num = fill_dir_array_and_print_files(argv, argc, dir_array);
+  if (dir_num != 0)
+    printf("\n\n");
 
+  //printf("dir_num %d\n argv[dir_num] %s", dir_num, argv[dir_num]);
+  for (int i = 0; i < dir_num; i++) {
+    DIR* d = opendir(argv[dir_array[i]]);
+    if (d == NULL) 
+      perror("mistake in opendir");
+    
+    printdir(&status, d, argv[dir_array[i]], true);
+    if (i != dir_num-1) printf("\n");
+  }
 
   return 0;
 }
 
 
+//*********************************
+//------------functions-----------
+//*********************************
 
-void printdir(struct flags_in_line* status, DIR* d, char* name) {
+void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_header) {
   struct dirent* directories_index[256];
   char buffer[1024] = {0};
   size_t index = 0;
 
-  printf("%s:\n", name);
+  if (status->recursive || to_print_header) printf("%s:\n", name);
 
   struct dirent* e;
   while((e = readdir(d))!= NULL) {
-
     snprintf(buffer, sizeof(buffer), "%s/%s", name, e->d_name);
     struct stat st;
     stat(buffer, &st);
     
-    if(e->d_name[0] != '.')
-    {
+    if(e->d_name[0] != '.') {
       if (S_ISDIR(st.st_mode)) {
         directories_index[index] = e; index++;
       }
 
-      printf("%s ", e->d_name);
+      printf("%s  ", e->d_name);
     }
   }
   
   printf("\n");
-  for (size_t j = 0; j < index; j++)
-    printf("%s\n", directories_index[j]->d_name);
+  // for (size_t j = 0; j < index; j++)
+  //   printf("%s\n", directories_index[j]->d_name);
   
   if (status->recursive) {
+    if (index != 0)
+      printf("\n");
     for (size_t j = 0; j < index; j++) {
       char buffer[1024];
       snprintf(buffer, sizeof(buffer), "%s/%s", name, directories_index[j]->d_name);
       
       DIR* subdir = opendir(buffer);
       if(subdir != NULL) {
-        printdir(status, subdir, buffer);
+        printdir(status, subdir, buffer, false);
         closedir(subdir);
+        printf("\n");
       }
     }
   }
+}
+
+int fill_dir_array_and_print_files(char* argv[], int argc, int* dir_array) {
+  int index = 0;
+  for (int i = optind; i < argc; i++) {
+    //printf("%s\n", argv[i]);
+    struct stat st;
+    bool is_good = true;
+    if(stat(argv[i], &st) == -1) {
+      fprintf(stderr, "myls: cannot access '%s': %s\n", argv[i], strerror(errno));
+      is_good = false;
+    }
+    else if (is_good) {
+      if (S_ISDIR(st.st_mode)) {
+        dir_array[index++] = i;
+      } 
+      else {
+        printf("%s  ", argv[i]);
+      }
+    }
+  }
+
+  return index;
 }
