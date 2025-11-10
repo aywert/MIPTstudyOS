@@ -48,7 +48,7 @@ struct flags_in_line {
 
 void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_header);
 int fill_dir_array_and_print_files(struct flags_in_line* status, char* argv[], int argc, int* dir_array);
-void print_long(struct stat* st, char* name);
+void print_long(struct stat* st, char* name, struct flags_in_line* status);
 void print_access_rights(unsigned int mode); 
 int count_blocks(DIR* d, char* name);
 
@@ -127,7 +127,7 @@ void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_he
   stat(name, &dir_stat);
 
   if (status->recursive || to_print_header) printf("%s:\n", name);
-  if (status->long_flag) {
+  if (status->long_flag || status->numeric) {
     printf("total %d\n", count_blocks(d, name));
     closedir(d);
     opendir(name);
@@ -146,8 +146,8 @@ void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_he
       if (status->inode) 
         printf("%lu ", e->d_ino);
 
-      if (status->long_flag) {
-        print_long(&st, e->d_name);
+      if (status->long_flag || status->numeric) {
+        print_long(&st, e->d_name, status);
         //if (i < argc-1)
         printf("\n");
       }
@@ -162,7 +162,7 @@ void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_he
     }
   }
   
-  if (!status->long_flag) printf("\n");
+  if (!(status->long_flag || status->numeric)) printf("\n");
   
   if (status->recursive) {
     if (index != 0)
@@ -199,8 +199,8 @@ int fill_dir_array_and_print_files(struct flags_in_line* status, char* argv[], i
         if (status->inode) 
           printf("%lu ", st.st_ino);
         
-        if (status->long_flag) {
-          print_long(&st, argv[i]);
+        if (status->long_flag || status->numeric) {
+          print_long(&st, argv[i], status);
           if (i < argc-1)
             printf("\n");
         }
@@ -222,15 +222,23 @@ int fill_dir_array_and_print_files(struct flags_in_line* status, char* argv[], i
   return index;
 }
 
-void print_long(struct stat* st, char* name) {
+void print_long(struct stat* st, char* name, struct flags_in_line* status) {
  
   struct passwd* st_username = getpwuid(st->st_uid);
   struct group*  st_group    = getgrgid(st->st_gid);
   print_access_rights(st->st_mode); 
   //printf("%u ", st->st_mode);
   printf("%lu ", st->st_nlink);
-  printf("%s ", st_username->pw_name);
-  printf("%s ", st_group->gr_name);
+  if (status->numeric) {
+    printf("%u ", st->st_uid);
+    printf("%u ", st->st_gid);
+    
+  }
+  else {
+    printf("%s ", st_username->pw_name);
+    printf("%s ", st_group->gr_name);
+  }
+  
   printf("%lu ", st->st_size);
   char *modify_time_str = ctime(&st->st_mtime);
   modify_time_str[strlen(modify_time_str)-1] = '\0';
