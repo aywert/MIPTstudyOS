@@ -23,6 +23,7 @@ DIR* opendir_safe(DIR* d, const char* name) {
 }
 
 struct option long_options[] = {
+    {"all", no_argument, 0, 'a'},
     {"long", no_argument, 0, 'l'},
     {"inode", no_argument, 0, 'i'},
     {"numeric", no_argument, 0, 'n'},
@@ -32,6 +33,7 @@ struct option long_options[] = {
 
 struct flags_in_line {
   bool no_flag;
+  bool all_flag;
   bool long_flag;
   bool inode;
   bool numeric;
@@ -47,8 +49,11 @@ int main(int argc, char* argv[])
   int option_index = 0;
   struct flags_in_line status = {};
 
-  while ((opt = getopt_long(argc, argv, "linR", long_options, &option_index)) != -1) {
+  while ((opt = getopt_long(argc, argv, "alinR", long_options, &option_index)) != -1) {
     switch (opt) {
+
+    case 'a': status.all_flag = true;
+    break;
 
     case 'R': status.recursive = true;
     break;
@@ -117,14 +122,19 @@ void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_he
       if (S_ISDIR(st.st_mode)) {
         directories_index[index] = e; index++;
       }
+      if (status->inode) 
+        printf("%lu ", e->d_ino);
+      printf("%s  ", e->d_name);
+    }
 
+    else if (status->all_flag) {
+      if (status->inode) 
+        printf("%lu ", e->d_ino);
       printf("%s  ", e->d_name);
     }
   }
   
   printf("\n");
-  // for (size_t j = 0; j < index; j++)
-  //   printf("%s\n", directories_index[j]->d_name);
   
   if (status->recursive) {
     if (index != 0)
@@ -132,12 +142,11 @@ void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_he
     for (size_t j = 0; j < index; j++) {
       char buffer[1024];
       snprintf(buffer, sizeof(buffer), "%s/%s", name, directories_index[j]->d_name);
-      
       DIR* subdir = opendir(buffer);
       if(subdir != NULL) {
         printdir(status, subdir, buffer, false);
         closedir(subdir);
-        printf("\n");
+        if (j != index-1) printf("\n");
       }
     }
   }
