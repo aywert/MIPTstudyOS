@@ -46,8 +46,13 @@ struct flags_in_line {
   bool recursive;
 };
 
+struct ret_value_fill {
+  int dir_num;
+  int printed;
+};
+
 void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_header);
-int fill_dir_array_and_print_files(struct flags_in_line* status, char* argv[], int argc, int* dir_array);
+struct ret_value_fill fill_dir_array_and_print_files(struct flags_in_line* status, char* argv[], int argc, int* dir_array);
 void print_long(struct stat* st, char* name, struct flags_in_line* status);
 void print_access_rights(unsigned int mode); 
 int count_blocks(DIR* d, char* name);
@@ -86,29 +91,43 @@ int main(int argc, char* argv[]) {
   //printf("optind = %d\n", optind);
   if (argc-optind == 0) {
     DIR* d = opendir(".");
+    struct stat st = {};
+    stat(".", &st);
     if (d == NULL) perror("mistake in opendir");
-  
+    
     if (!status.dim_flag) printdir(&status, d, ".", false);
-    else printf(".\n");
+    else {
+      if (status.inode) 
+        printf("%lu ", st.st_ino);
+
+      if (status.long_flag || status.numeric) {
+        print_long(&st, ".", &status);
+        printf("\n");
+      }
+      else {
+        printf(".\n");
+      }
+    }
 
     closedir(d);
     return 0;
   }
 
   int dir_array[258];
-  int dir_num = fill_dir_array_and_print_files(&status, argv, argc, dir_array);
+  struct ret_value_fill ret_st;
+  ret_st = fill_dir_array_and_print_files(&status, argv, argc, dir_array);
 
   //printf("dir_num %d\n argv[dir_num] %s", dir_num, argv[dir_num]);
-  for (int i = 0; i < dir_num; i++) {
+  for (int i = 0; i < ret_st.dir_num; i++) {
     DIR* d = opendir(argv[dir_array[i]]);
     if (d == NULL) 
       perror("mistake in opendir");
     
-    if (dir_num == 1)
+    if (ret_st.dir_num == 1 && (ret_st.printed == 0))
       printdir(&status, d, argv[dir_array[i]], false);
     else
       printdir(&status, d, argv[dir_array[i]], true);
-    if (i != dir_num-1) printf("\n");
+    if (i != ret_st.dir_num-1) printf("\n");
   }
 
   return 0;
@@ -148,7 +167,6 @@ void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_he
 
       if (status->long_flag || status->numeric) {
         print_long(&st, e->d_name, status);
-        //if (i < argc-1)
         printf("\n");
       }
       else {
@@ -158,7 +176,14 @@ void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_he
     else if (status->all_flag) {
       if (status->inode) 
         printf("%lu ", e->d_ino);
-      printf("%s  ", e->d_name);
+
+      if (status->long_flag || status->numeric) {
+        print_long(&st, e->d_name, status);
+        printf("\n");
+      }
+      else {
+        printf("%s  ", e->d_name);
+      }
     }
   }
   
@@ -180,7 +205,7 @@ void printdir(struct flags_in_line* status, DIR* d, char* name, bool to_print_he
   }
 }
 
-int fill_dir_array_and_print_files(struct flags_in_line* status, char* argv[], int argc, int* dir_array) {
+struct ret_value_fill fill_dir_array_and_print_files(struct flags_in_line* status, char* argv[], int argc, int* dir_array) {
   int index = 0;
   int printed = 0;
   for (int i = optind; i < argc; i++) {
@@ -192,7 +217,7 @@ int fill_dir_array_and_print_files(struct flags_in_line* status, char* argv[], i
       is_good = false;
     }
     else if (is_good) {
-      if (S_ISDIR(st.st_mode)) {
+      if (S_ISDIR(st.st_mode) && (!status->dim_flag)) {
         dir_array[index++] = i;
       } 
       else {
@@ -219,7 +244,8 @@ int fill_dir_array_and_print_files(struct flags_in_line* status, char* argv[], i
       printf("\n");
   }
 
-  return index;
+  struct ret_value_fill st = {index, printed};
+  return st;
 }
 
 void print_long(struct stat* st, char* name, struct flags_in_line* status) {
