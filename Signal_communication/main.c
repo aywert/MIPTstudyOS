@@ -45,7 +45,7 @@ int main() {
     sigaction(SIGUSR1, &sg_new, &sg_old);
     sigaction(SIGUSR2, &sg_new, &sg_old);
     //------------------------------------
-
+    //setting handler to process end signal
     sigset_t mask_end;
     sigemptyset(&mask_end);
     sigaddset(&mask_end, SIGTERM);
@@ -64,7 +64,7 @@ int main() {
     exit(1);
   }
 
-  sleep(1);
+  sleep(1); //waiting for the child process to initialize
 
   sigset_t new_mask;
   sigemptyset(&new_mask);
