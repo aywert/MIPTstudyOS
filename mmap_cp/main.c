@@ -21,7 +21,7 @@ int main(int argc, char* argv[]) {
     ftruncate_safe(fd_2, shared_mem_size); // truncate file given by fd to size 
 
     void* mapped_1 = mmap_safe(NULL, shared_mem_size, PROT_READ, MAP_PRIVATE, fd_1, 0);
-    void* mapped_2   = mmap_safe(NULL, shared_mem_size, PROT_WRITE, MAP_SHARED, fd_2, 0);
+    void* mapped_2 = mmap_safe(NULL, shared_mem_size, PROT_WRITE, MAP_SHARED, fd_2, 0);
 
     memcpy(mapped_2, mapped_1, shared_mem_size);
 

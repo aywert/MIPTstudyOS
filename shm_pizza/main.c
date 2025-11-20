@@ -106,7 +106,7 @@ void Deliver(int id, int shmid, int semid, int N)
   }
   
   RunOp_safe(semid, delivery_enter, 1);
-  RunOp_safe(semid, wait_enter, 1); //Z()&V()
+  RunOp_safe(semid, wait_enter, 1); // waiting for a signal to start
   printf("Deliver %d: Ready!\n", id);
 
   bool take_pizza = true;
