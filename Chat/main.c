@@ -64,44 +64,10 @@ int main(int argc, char* argv[]) {
   else mem->chatters--;
   RunOp_safe(mem->semid, V, 1); 
 
-  //del_shm(shmid);
+  del_shm(shmid);
   if (semid) delete_semaphore(semid); 
   return 0;
 }
-
-// void Chat(void) {
-//   bool talking = true;
-//   char line[256] = {};
-  
-//   while(talking) {
-//     printf("MAX> ");
-//     fflush(stdout);
-    
-//     if (fgets(line, 256, stdin) == NULL) break;
-//     line[255] = '\0';
-    
-//     if (strncmp(line, "bye", 3) == 0) {
-//       talking = false;
-//       return;
-//     }
-//     else if (strncmp(line, "tell ", 5) == 0) {
-//       pid_t pid_to_tell = 0;
-//       char buffer[MSG_LENGTH] = {};
-      
-//       if (sscanf(line + 5, "%d %[^'\n']", &pid_to_tell, buffer) == 2) {
-//         if (pid_to_tell > 0) {
-//           printf("Sending to PID %d: %s\n", pid_to_tell, buffer);
-//           send_msg(pid_to_tell, mem, buffer);
-//         }
-//       } else {
-//         printf("Usage: tell <pid> <message>\n");
-//       }
-//     }
-//     else {
-//       printf("Unknown command: %s\n", line);
-//     }
-//   }
-// }
 
 void Chat(void) {
   bool talking = true;
@@ -161,7 +127,6 @@ int join(int argc, char* argv[], pid_t pid) {
   //printf("dummy_hdlr is installed\n");
 
   if (argc == 1) { //создаем разделяемую память
-    //int semid = create_semaphore("/main.c", IPC_CREAT, &st);
     shmid = shmget(ftok("main.c", 1), sizeof(struct members), IPC_CREAT | 0644);
     if (shmid < 0) {
       perror("shmget");
@@ -185,17 +150,17 @@ int join(int argc, char* argv[], pid_t pid) {
     sigwaitinfo(&new_mask, &info);
 
     shmid = info.si_value.sival_int;
+    
     printf("got information from main\n");
     attach_to_shm(&mem, shmid);
     for (int i = 0; i < MAX_USERS; i++) {
-      if (mem->members[i] == 0) {
-        RunOp_safe(mem->semid, P, 1);
-        mem->members[i] = pid;
+      if (mem->members[i] == pid) {
         my_index = i;
-        RunOp_safe(mem->semid, V, 1);
         break;
       }
     }
+    printf("members:\n");
+    for (int i = 0; i < 10; i++) printf("%d\n", mem->members[i]);
   }
 
   printf("my shmid = %d\n", shmid);
@@ -228,15 +193,17 @@ void attach_to_shm(struct members** mem, int shmid) {
 //---------------------------------------
 
 void request_hdlr(int signal, siginfo_t* info, void *) {
-  const union sigval val = { .sival_int = shmid };
-  
+
+  RunOp_safe(mem->semid, P, 1);
   for (int i = 0; i < MAX_USERS; i++) {
     if (mem->members[i] == 0) {
       mem->members[i] = info->si_pid;
       break;
     }
   }
+  RunOp_safe(mem->semid, V, 1);
   
+  const union sigval val = { .sival_int = shmid };
   sigqueue(info->si_pid, SIGRTMAX, val);
 }
 
@@ -264,6 +231,7 @@ void send_msg(pid_t pid, struct members* mem, const char* msg) {
   printf("sending: '%s'\n", mem->msg[index]);
   const union sigval val = { .sival_int = 0};
   sigqueue(pid, SIGRTMIN+1, val);
+
   RunOp_safe(mem->semid, V, 1);
   return;
 }
@@ -277,7 +245,7 @@ void msg_hdlr(int signal, siginfo_t* info, void *) {
 }
 
 //---------------------------------------
-//------SECTION WITH SEMAPHORES----------
+//-------SECTION WITH SEMAPHORES---------
 //---------------------------------------
 
 int create_semaphore(const char* name, int flags) {
