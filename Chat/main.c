@@ -36,6 +36,7 @@ void dummy_hdlr(int signal, siginfo_t* info, void *);
 int join(int argc, char* argv[], pid_t pid);
 void Chat(void);
 void send_msg(pid_t pid, struct members* mem, const char* msg);
+void broadcast(struct members* mem, const char* msg);
 void msg_hdlr(int signal, siginfo_t* info, void *); 
 
 int shmid = 0;
@@ -57,14 +58,21 @@ int main(int argc, char* argv[]) {
 
   int semid = 0;
   RunOp_safe(mem->semid, P, 1);
+
   if (mem->chatters == 1) {
     semid = mem->semid;
     del_shm(shmid);
   }
-  else mem->chatters--;
+  else {
+    mem->chatters--;
+    for (int i = 0; i < MAX_USERS; i++) {
+      if (mem->members[i] == my_pid) {
+        mem->members[i] = 0;
+      }
+    }
+  }
   RunOp_safe(mem->semid, V, 1); 
 
-  //del_shm(shmid);
   if (semid) delete_semaphore(semid); 
   return 0;
 }
@@ -81,14 +89,18 @@ void Chat(void) {
     fgets(buf, 2*MSG_LENGTH, stdin);
     buf[strcspn(buf, "\n")] = '\0';
 
-    printf("buf = %s\n", buf);
-    char* line = strtok(buf, " ");
+    char working_buf[2*MSG_LENGTH];
+    strcpy(working_buf, buf);
+
+    //printf("buf = %s\n", working_buf);
+    char* line = strtok(working_buf, " ");
     if (line == NULL) {
       continue; 
     }
 
-    printf("line = '%s'\n", line);
+    //printf("line = '%s'\n", line);
     if (!strncmp(line, "bye", 3)) {
+      broadcast(mem, "Bye everybody!\n");
       talking = false;
     }
 
@@ -97,21 +109,33 @@ void Chat(void) {
       char* pid_str = strtok(NULL, " ");
       char* msg = strtok(NULL, "");
 
-      printf("pid = %s\n", pid_str);
-      if ((pid_to_tell = atoi(pid_str)) != 0) {
-        printf("it is tell and pid = %d, msg = %s\n", pid_to_tell, msg);
-        send_msg(pid_to_tell, mem, msg);
-        memset(buf, '\0', 2*MSG_LENGTH);
+      if (pid_str == NULL) {
+        printf("Message wasn't delivered: empty\n");
         continue;
       }
 
+      //printf("pid = %s\n", pid_str);
+      if ((pid_to_tell = atoi(pid_str)) != 0) {
+        if (msg == NULL) {
+          printf("Message wasn't delivered: empty\n");
+          continue;
+        }
+
+        //printf("it is tell and pid = %d, msg = %s\n", pid_to_tell, msg);
+        send_msg(pid_to_tell, mem, msg);
+      }
+
       else { 
-        talking = false;
+        char* pid_str = strtok(buf, " ");
+        char* msg = strtok(NULL, "");
+        broadcast(mem, msg);
       }
 
       }
       else printf("no such command. Try again.\n");
-    }
+
+      memset(buf, '\0', 2*MSG_LENGTH);
+  } 
 }
 
 int join(int argc, char* argv[], pid_t pid) {
@@ -236,6 +260,15 @@ void request_hdlr(int signal, siginfo_t* info, void *) {
 
 void dummy_hdlr(int signal, siginfo_t* info, void *) {
   return;
+}
+
+void broadcast(struct members* mem, const char* msg) {
+  pid_t pid = getpid();
+  for (int i = 0; i < MAX_USERS; i++) {
+    if (mem->members[i] != 0 && mem->members[i] != pid) {
+      send_msg(mem->members[i], mem, msg);
+    }
+  }
 }
 
 void send_msg(pid_t pid, struct members* mem, const char* msg) {
