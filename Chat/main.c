@@ -64,36 +64,54 @@ int main(int argc, char* argv[]) {
   else mem->chatters--;
   RunOp_safe(mem->semid, V, 1); 
 
-  del_shm(shmid);
+  //del_shm(shmid);
   if (semid) delete_semaphore(semid); 
   return 0;
 }
 
 void Chat(void) {
   bool talking = true;
-  char msg[32] = {};
+  char buf[2*MSG_LENGTH] = {};
+  
   while(talking) {
 
     printf("MAX> ");
     fflush(stdout);
 
-    scanf("%s", msg);
-    if (!strncmp(msg, "bye", 3)) talking = false;
+    fgets(buf, 2*MSG_LENGTH, stdin);
+    buf[strcspn(buf, "\n")] = '\0';
 
-    else if (!strncmp(msg, "tell", 4)) {
-      pid_t pid_to_tell = 0;
-      char buffer[MSG_LENGTH] = {};
-      scanf("%d %s", &pid_to_tell, buffer);
-      if (pid_to_tell == 0) talking = false;
-
-      else { 
-        printf("it is tell and pid = %d\n", pid_to_tell);
-        send_msg(pid_to_tell, mem, buffer);
-      }
+    printf("buf = %s\n", buf);
+    char* line = strtok(buf, " ");
+    if (line == NULL) {
+      continue; 
     }
 
-    else printf("no such command. Try again.\n");
-  }
+    printf("line = '%s'\n", line);
+    if (!strncmp(line, "bye", 3)) {
+      talking = false;
+    }
+
+    else if (!strncmp(line, "tell", 4)) {
+      pid_t pid_to_tell = 0;
+      char* pid_str = strtok(NULL, " ");
+      char* msg = strtok(NULL, "");
+
+      printf("pid = %s\n", pid_str);
+      if ((pid_to_tell = atoi(pid_str)) != 0) {
+        printf("it is tell and pid = %d, msg = %s\n", pid_to_tell, msg);
+        send_msg(pid_to_tell, mem, msg);
+        memset(buf, '\0', 2*MSG_LENGTH);
+        continue;
+      }
+
+      else { 
+        talking = false;
+      }
+
+      }
+      else printf("no such command. Try again.\n");
+    }
 }
 
 int join(int argc, char* argv[], pid_t pid) {
@@ -134,6 +152,8 @@ int join(int argc, char* argv[], pid_t pid) {
     }
 
     attach_to_shm(&mem, shmid);
+    memset(mem, 0, sizeof(struct members));
+
     mem->members[0] = pid;
     my_index = 0;
     mem->semid = create_semaphore("main.c", IPC_CREAT);
@@ -193,18 +213,25 @@ void attach_to_shm(struct members** mem, int shmid) {
 //---------------------------------------
 
 void request_hdlr(int signal, siginfo_t* info, void *) {
-
+  bool registrated = false;
   RunOp_safe(mem->semid, P, 1);
   for (int i = 0; i < MAX_USERS; i++) {
     if (mem->members[i] == 0) {
       mem->members[i] = info->si_pid;
+      registrated = true;
       break;
     }
   }
   RunOp_safe(mem->semid, V, 1);
   
-  const union sigval val = { .sival_int = shmid };
-  sigqueue(info->si_pid, SIGRTMAX, val);
+  if (registrated) {
+    const union sigval val = { .sival_int = shmid };
+    sigqueue(info->si_pid, SIGRTMAX, val);
+  }
+  else {
+    printf("mistake in processing request\n");
+  }
+  
 }
 
 void dummy_hdlr(int signal, siginfo_t* info, void *) {
@@ -224,6 +251,7 @@ void send_msg(pid_t pid, struct members* mem, const char* msg) {
 
   if (index == -1) {
     printf("Couldn't find index by pid\n");
+    RunOp_safe(mem->semid, V, 1);
     return;
   } 
 
