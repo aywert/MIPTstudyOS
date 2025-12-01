@@ -10,7 +10,7 @@ int main(void) {
 
   init_runners(queue_id, N);  //starts N processes
   judge(queue_id, N);         //gives start to the first runner
-  msgctl(queue_id, IPC_RMID, &My_st);
+  msgctl(queue_id, IPC_RMID, &My_st); //deleting the queue of messages
 
   return 0;
 }
