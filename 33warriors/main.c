@@ -17,6 +17,14 @@ enum message_type {
   COMMIT_MSG = 5,
 };
 
+enum letter_status {
+  not_taken = 0,
+  requested = 1,
+  commited  = 2,
+  accepted  = 3,
+  rejected  = 4,
+};
+
 struct msgbuf {
   long mtype;       /* message type, must be > 0 */
   size_t position;
@@ -24,17 +32,34 @@ struct msgbuf {
   char letter;    /* message data */
 };
 
+struct letter_state {
+  char letter;
+  size_t position;
+  enum letter_status status;
+  size_t replies; 
+};
+
+struct warrior_state {
+  struct letter_state complex_song[128];
+  size_t warriors_num;
+  char my_letter;
+  int my_positions[64];
+  size_t index_of_the_last_position;
+  pid_t my_pid;
+};
+
 #define FAILURE_STATUS -1
 #define SUCCESS_STATUS 1
 
-void warrior(int queue_id, int* queue_array, char* song);
+void process_message(struct msgbuf* msg, struct warrior_state* st);
+void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num);
 int create_queue(key_t key, int msgflg);
 void init_warriors(int N, int* queue_array, char* song);
 int count_letters(char* line);
 
 
-void send_message(int queue_id, int msg_type, char letter);
-void broadcast(int* queue_array, size_t array_len, int msg_type, char letter);
+void send_message(int queue_id, int msg_type, char letter, size_t position);
+void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, int queue_id, size_t position);
 
 int main(int argc, char* argv[]) {
 
@@ -60,24 +85,31 @@ int main(int argc, char* argv[]) {
   return 0;
 }
 
-void warrior(int queue_id, int* queue_array, char* song) {
-  char set[256] = {};
+void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
+  
+  struct warrior_state st;
+
+  for (size_t i = 0; i < warriors_num; i++) {
+    st.complex_song[i].letter = song[i];
+    st.complex_song[i].status = not_taken;
+  }
+  st.index_of_the_last_position = 0;
+  st.my_pid = getpid();
+  st.my_letter = '\0';
+  st.warriors_num = warriors_num;
+
+  for (int i = 0; i < 64; i++)
+    st.my_positions[i] = -1; 
+
   size_t index = 0;
-
-  int msg_status = NO_MSG;
-  size_t count_replies = 0;
-
-  char my_letter = '\0';
-  size_t* my_positions[256] = {};
-  size_t num_of_warriors = 0;
   struct msgbuf msg = {};
     
   bool running = true;
   while (running) {
-    int ret = msgrcv(queue_id, &msg, sizeof(char), 0, IPC_NOWAIT);
+    int ret = msgrcv(queue_id, &msg, sizeof(struct msgbuf) - sizeof(long), 0, IPC_NOWAIT);
 
     if (ret != -1) {
-      process_message(&msg, &my_letter, &my_positions, &set, &index, &msg_status, &count_replies, num_of_warriors);
+      process_message(&msg, &st);
 
       if (msg.mtype == TERMINATE_MSG) {
         running = 0;
@@ -87,40 +119,72 @@ void warrior(int queue_id, int* queue_array, char* song) {
       perror("msgrcv");
       running = 0;
     }
+    else {
+      while (st.complex_song[index].status != not_taken) {
+        index++; 
+        if (index == warriors_num && st.my_letter == '\0') index = 0; 
+      }
+      broadcast(queue_array, warriors_num, REQUEST_MSG, st.complex_song[index].letter, queue_id, index);
+      index++;
+      sleep(1);
+    }
   }
 
   return;
 }
 
-void process_message(struct msgbuf* msg, char* my_letter, size_t** my_position, 
-                     char* set, size_t* index, int* status, size_t* count_replies, size_t num_of_warriors) {
+void process_message(struct msgbuf* msg, struct warrior_state* st) {
   switch(msg->mtype) {
     case REQUEST_MSG: {
-      if (*my_letter == msg->letter) {
-        //set[*index++] = msg->letter;
-        send_message(msg->queue_id, REJECT_MSG, msg->letter);
+      if (st->my_letter == msg->letter || (st->complex_song[msg->position].status == commited) 
+                                       || (st->complex_song[msg->position].status == accepted)) {
+        st->complex_song[msg->position].status = rejected;
+        send_message(msg->queue_id, REJECT_MSG, msg->letter, msg->position);
       }
-      else send_message(msg->queue_id, ACCEPT_MSG, msg->letter);
+      else {
+        st->complex_song[msg->position].status = accepted;
+        send_message(msg->queue_id, ACCEPT_MSG, msg->letter, msg->position);
+      }
       break;
     }
     case ACCEPT_MSG: {
-      if (*status == REQUEST_MSG) {
-        *count_replies++;
-        if (count_replies == num_of_warriors-1) {
-          *my_letter = msg->letter;
-          send_message(msg->queue_id, COMMIT_MSG, msg->letter);
+      if (st->complex_song[msg->position].status == requested || 
+         (st->complex_song[msg->position].status == rejected) ) {
+        st->complex_song[msg->position].replies++;
+        if (st->complex_song[msg->position].replies == st->warriors_num-1) {
+          st->complex_song[msg->position].replies = 0;
+          st->complex_song[msg->position].status = commited;
+          st->my_letter = msg->letter;
+          st->my_positions[st->index_of_the_last_position++] = msg->position;
+          send_message(msg->queue_id, COMMIT_MSG, msg->letter, msg->position);
         }
+      }
+      
+      else {
+        printf("AAAAAAAA we are dying\n Non-requested letter got message accepted\n");
       }
       break;
     }
 
     case REJECT_MSG: {
-      //no do much
+      if (st->complex_song[msg->position].status == requested || 
+         (st->complex_song[msg->position].status == rejected)) {
+        st->complex_song[msg->position].replies++;
+        if (st->complex_song[msg->position].replies == st->warriors_num-1) {
+          st->complex_song[msg->position].status = rejected;
+          st->complex_song[msg->position].replies = 0;
+        }
+      }
+
+       else {
+        printf("AAAAAAAA we are dying\n Non-requested letter got message rejected\n");
+      }
       break;
     }
 
     case COMMIT_MSG: {
-      //update corrent state somehow
+      printf("Warrior %d: my letter %c on positions: %d\n", getpid(), st->my_letter, st->my_positions[0]);
+      st->complex_song[msg->position].letter = msg->letter;
       break;
     }
 
@@ -145,8 +209,7 @@ int create_queue(key_t key, int msgflg) {
 
 void init_warriors(int N, int* queue_array, char* song) {
   for (int i = 0; i < N; i++) {
-    char ch = i;
-    queue_array[i] = create_queue(ch, IPC_CREAT|0666);
+    queue_array[i] = create_queue(ftok("A", i), IPC_CREAT|0666);
     pid_t pid = fork();
 
     if (pid == -1) {
@@ -155,7 +218,7 @@ void init_warriors(int N, int* queue_array, char* song) {
     }
 
     if (pid == 0) {
-      warrior(queue_array[i], queue_array, song);
+      warrior(queue_array[i], queue_array, song, N);
       printf("i am here\n");
       msgctl(queue_array[i], IPC_RMID, NULL); // deleting queue
       return;
@@ -180,16 +243,16 @@ int count_letters(char* line) {
   return count;
 }
 
-void broadcast(int* queue_array, size_t array_len, int msg_type, char letter) {
+void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, int queue_id, size_t position) {
   for (size_t i = 0; i < array_len; i++) {
-    if (queue_array[i] != 0)
-      send_message(queue_array[i], msg_type, letter);
+    if (queue_array[i] != 0 && queue_array[i] != queue_id)
+      send_message(queue_array[i], msg_type, letter, position);
   }
 }
 
-void send_message(int queue_id, int msg_type, char letter)
+void send_message(int queue_id, int msg_type, char letter, size_t position)
 {
-  struct msgbuf buf = {.mtype = msg_type, .letter = letter, .queue_id = queue_id};
+  struct msgbuf buf = {.mtype = msg_type, .letter = letter, .queue_id = queue_id, .position = position};
 
   if (msgsnd(queue_id, &buf, sizeof(char), 0) == -1) {
     fprintf(stderr, "Failed to send message: %s\n", strerror(errno));
