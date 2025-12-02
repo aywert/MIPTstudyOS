@@ -27,7 +27,7 @@ enum letter_status {
 
 struct msgbuf {
   long mtype;       /* message type, must be > 0 */
-  size_t position;
+  int position;
   int  queue_id;
   char letter;    /* message data */
 };
@@ -45,6 +45,7 @@ struct warrior_state {
   char my_letter;
   int my_positions[64];
   size_t index_of_the_last_position;
+  pid_t queue_id;
   pid_t my_pid;
 };
 
@@ -58,7 +59,7 @@ void init_warriors(int N, int* queue_array, char* song);
 int count_letters(char* line);
 
 
-void send_message(int queue_id, int msg_type, char letter, size_t position);
+void send_message(int queue_id_to, int queue_id_from, int msg_type, char letter, int position);
 void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, int queue_id, size_t position);
 
 int main(int argc, char* argv[]) {
@@ -72,12 +73,6 @@ int main(int argc, char* argv[]) {
   int* queue_array = (int*)calloc(letters, sizeof(int));
   init_warriors(letters, queue_array, argv[1]);
 
-//   int queue_id = create_queue(IPC_CREAT|0666);
-//   struct msqid_ds My_st = {};
-
-//   init_warriors(queue_id, N);  //starts N processes
-//   msgctl(queue_id, IPC_RMID, &My_st); //deleting the queue of messages
-
   for (int j = 0; j < letters; j++)
     wait(NULL);
 
@@ -90,12 +85,15 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
   struct warrior_state st;
 
   for (size_t i = 0; i < warriors_num; i++) {
+    st.complex_song[i].position = i;
     st.complex_song[i].letter = song[i];
     st.complex_song[i].status = not_taken;
+    st.complex_song[i].replies = 0;
   }
   st.index_of_the_last_position = 0;
   st.my_pid = getpid();
   st.my_letter = '\0';
+  st.queue_id = queue_id;
   st.warriors_num = warriors_num;
 
   for (int i = 0; i < 64; i++)
@@ -106,6 +104,9 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
     
   bool running = true;
   while (running) {
+    //printf("i am process %d\n", getpid());
+    if (st.my_letter != '\0') break;
+
     int ret = msgrcv(queue_id, &msg, sizeof(struct msgbuf) - sizeof(long), 0, IPC_NOWAIT);
 
     if (ret != -1) {
@@ -120,15 +121,20 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
       running = 0;
     }
     else {
-      while (st.complex_song[index].status != not_taken) {
+      while (st.complex_song[index].status != not_taken && index <= warriors_num) {
         index++; 
-        if (index == warriors_num && st.my_letter == '\0') index = 0; 
       }
+
+      if (index == warriors_num) index = 0; 
+
+      st.complex_song[index].status = requested;
       broadcast(queue_array, warriors_num, REQUEST_MSG, st.complex_song[index].letter, queue_id, index);
       index++;
       sleep(1);
     }
   }
+
+  printf("i am process %d exited\n my letter %c\n", getpid(), st.my_letter);
 
   return;
 }
@@ -139,11 +145,11 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
       if (st->my_letter == msg->letter || (st->complex_song[msg->position].status == commited) 
                                        || (st->complex_song[msg->position].status == accepted)) {
         st->complex_song[msg->position].status = rejected;
-        send_message(msg->queue_id, REJECT_MSG, msg->letter, msg->position);
+        send_message(msg->queue_id, st->queue_id, REJECT_MSG, msg->letter, msg->position);
       }
       else {
         st->complex_song[msg->position].status = accepted;
-        send_message(msg->queue_id, ACCEPT_MSG, msg->letter, msg->position);
+        send_message(msg->queue_id, st->queue_id, ACCEPT_MSG, msg->letter, msg->position);
       }
       break;
     }
@@ -156,7 +162,7 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
           st->complex_song[msg->position].status = commited;
           st->my_letter = msg->letter;
           st->my_positions[st->index_of_the_last_position++] = msg->position;
-          send_message(msg->queue_id, COMMIT_MSG, msg->letter, msg->position);
+          send_message(msg->queue_id, st->queue_id, COMMIT_MSG, msg->letter, msg->position);
         }
       }
       
@@ -209,7 +215,8 @@ int create_queue(key_t key, int msgflg) {
 
 void init_warriors(int N, int* queue_array, char* song) {
   for (int i = 0; i < N; i++) {
-    queue_array[i] = create_queue(ftok("A", i), IPC_CREAT|0666);
+    //char
+    queue_array[i] = create_queue(ftok("main.c", i), IPC_CREAT|0666);
     pid_t pid = fork();
 
     if (pid == -1) {
@@ -246,15 +253,15 @@ int count_letters(char* line) {
 void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, int queue_id, size_t position) {
   for (size_t i = 0; i < array_len; i++) {
     if (queue_array[i] != 0 && queue_array[i] != queue_id)
-      send_message(queue_array[i], msg_type, letter, position);
+      send_message(queue_array[i], queue_id, msg_type, letter, position);
   }
 }
 
-void send_message(int queue_id, int msg_type, char letter, size_t position)
-{
-  struct msgbuf buf = {.mtype = msg_type, .letter = letter, .queue_id = queue_id, .position = position};
-
-  if (msgsnd(queue_id, &buf, sizeof(char), 0) == -1) {
+void send_message(int queue_id_to, int queue_id_from, int msg_type, char letter, int position) {
+  struct msgbuf buf = {.mtype = msg_type, .letter = letter, .queue_id = queue_id_from, .position = position};
+  printf("mtype = %d\n char = %c\n position = %d\n queue_id_from = %d\n queue_id_to = %d\n", 
+          msg_type, letter, position, queue_id_from,  queue_id_to);
+  if (msgsnd(queue_id_to, &buf, sizeof(struct msgbuf) - sizeof(long), 0) == -1) {
     fprintf(stderr, "Failed to send message: %s\n", strerror(errno));
     exit(FAILURE_STATUS); 
   }
