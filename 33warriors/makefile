@@ -9,7 +9,7 @@ OBJFILES := main.o
 all: $(NAMEEXE)
 
 run: $(NAMEEXE)
-	./$(NAMEEXE) ab
+	./$(NAMEEXE) ilovekate
 
 $(NAMEEXE) : $(OBJFILES)
 	$(CC) $(OBJFILES) -o $@ 

@@ -76,6 +76,7 @@ int main(int argc, char* argv[]) {
   }
 
   int letters = count_letters(argv[1]);
+  printf("letter count = %d\n", letters);
   int* queue_array = (int*)calloc(letters, sizeof(int));
   init_warriors(letters, queue_array, argv[1]);
 
@@ -93,7 +94,7 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
   
   struct warrior_state st;
 
-  for (size_t i = 0; i < warriors_num; i++) {
+  for (size_t i = 0; i < strlen(song); i++) {
     st.complex_song[i].position = i;
     st.complex_song[i].letter = song[i];
     st.complex_song[i].status = not_taken;
@@ -115,12 +116,14 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
 
   size_t index = 0;
   struct msgbuf msg = {};
-    
+  size_t num_of_commits = 0;
   
   while (st.running) {
+    //printf("i am %d my status %d my letter %c\n", st.queue_id, st.warriror_status, st.my_letter);
     int ret = msgrcv(queue_id, &msg, sizeof(struct msgbuf) - sizeof(long), 0, IPC_NOWAIT);
 
     if (ret != -1) {
+      if (msg.mtype == COMMIT_MSG) num_of_commits++;
       process_message(&msg, &st);
     }
     else if (errno != ENOMSG) {
@@ -142,6 +145,11 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
       else index++; 
       sleep(1);
     }
+
+    if (st.active_warriors == 0) {
+      broadcast(st.queue_array, st.warriors_num, TERMINATE_MSG, '\0', st.queue_id, -1);
+      st.running = false;
+    }
   }
 
   printf("i am process %d exited\n my letter %c\n", getpid(), st.my_letter);
@@ -152,41 +160,56 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
 void process_message(struct msgbuf* msg, struct warrior_state* st) {
   switch(msg->mtype) {
     case REQUEST_MSG: {
-      if (st->my_letter == msg->letter || (st->complex_song[msg->position].status == commited) 
-                                       || (st->complex_song[msg->position].status == accepted)
-                                       ) {
-        st->complex_song[msg->position].status = rejected;
+      if (st->my_letter == msg->letter || (st->complex_song[msg->position].status == commited)) {
+        if (st->complex_song[msg->position].status != requested) {
+          st->complex_song[msg->position].status = rejected;
+        }
         send_message(msg->queue_id, st->queue_id, REJECT_MSG, msg->letter, msg->position);
       }
       else if (st->complex_song[msg->position].status == requested) {
         if (msg->queue_id < st->queue_id) {
-          st->complex_song[msg->position].status = accepted;
           send_message(msg->queue_id, st->queue_id, ACCEPT_MSG, msg->letter, msg->position);
         }
 
         else {
-          st->complex_song[msg->position].status = rejected;
           send_message(msg->queue_id, st->queue_id, REJECT_MSG, msg->letter, msg->position);
         }
       }
       else {
-        st->complex_song[msg->position].status = accepted;
+        if (st->complex_song[msg->position].status != requested) {
+          st->complex_song[msg->position].status = accepted;
+        }
         send_message(msg->queue_id, st->queue_id, ACCEPT_MSG, msg->letter, msg->position);
       }
       break;
     }
     case ACCEPT_MSG: {
+      printf("ACCEPT: status = %d\n", st->complex_song[msg->position].status);
       if (st->complex_song[msg->position].status == requested || 
-         (st->complex_song[msg->position].status == rejected) ) {
+          st->complex_song[msg->position].status == rejected) {
         st->complex_song[msg->position].replies++;
         if (st->complex_song[msg->position].replies == st->warriors_num-1) {
+          if (st->complex_song[msg->position].status == rejected) {
+            st->warriror_status = rejected;
+            break;
+          }  
           st->complex_song[msg->position].replies = 0;
           st->complex_song[msg->position].status = commited;
           st->active_warriors--;
           st->my_letter = msg->letter;
+          st->warriror_status = accepted;
           st->my_positions[st->index_of_the_last_position++] = msg->position;
           printf("Warrior %d: my letter %c on positions: %d\n", st->queue_id, st->my_letter, st->my_positions[0]);
-          send_message(msg->queue_id, st->queue_id, COMMIT_MSG, msg->letter, msg->position);
+          printf("Active warriors %zu\n", st->active_warriors);
+          // if (st->active_warriors == 0) {
+          //   broadcast(st->queue_array, st->warriors_num, TERMINATE_MSG, '\0', st->queue_id, -1);
+          //   send_message(st->queue_id, st->queue_id, TERMINATE_MSG, '\0', -1);
+          // }
+          // else {
+          broadcast(st->queue_array, st->warriors_num, COMMIT_MSG, msg->letter, st->queue_id, msg->position);
+          //send_message(msg->queue_id, st->queue_id, COMMIT_MSG, msg->letter, msg->position);
+          // }
+          
         }
       }
       
@@ -197,13 +220,12 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
     }
 
     case REJECT_MSG: {
-      printf("status = %d\n", st->complex_song[msg->position].status);
+      printf("REJECT: status = %d\n", st->complex_song[msg->position].status);
       if (st->complex_song[msg->position].status == requested || 
-         (st->complex_song[msg->position].status == rejected) ||
-         (st->complex_song[msg->position].status == accepted)) {
+          st->complex_song[msg->position].status == rejected) {
+        st->complex_song[msg->position].status = rejected;
         st->complex_song[msg->position].replies++;
         if (st->complex_song[msg->position].replies == st->warriors_num-1) {
-          st->complex_song[msg->position].status = rejected;
           st->warriror_status = rejected;
           st->complex_song[msg->position].replies = 0;
         }
@@ -219,15 +241,12 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
       st->complex_song[msg->position].letter = msg->letter;
       st->complex_song[msg->position].status = commited;
       st->active_warriors--;
-      
-      printf("Warrior %d number of warriors: %zu\n", st->queue_id, st->active_warriors);
-      if (st->active_warriors == 0) {
-        broadcast(st->queue_array, st->warriors_num, TERMINATE_MSG, '\0', st->queue_id, -1);
-        send_message(st->queue_id, st->queue_id, TERMINATE_MSG, '\0', -1);
-      }
 
-      printf("got out of COMMIT\n");
-        
+      // if (st->active_warriors == 0) {
+      //   broadcast(st->queue_array, st->warriors_num, TERMINATE_MSG, '\0', st->queue_id, -1);
+      //   send_message(st->queue_id, st->queue_id, TERMINATE_MSG, '\0', -1);
+      // }
+
       break;
     }
 
@@ -288,17 +307,27 @@ void init_warriors(int N, int* queue_array, char* song) {
 }
 
 int count_letters(char* line) {
-  int count = 0; 
-  char set[256] = {}; 
-
-  for (int i = 0; line[i] != '\0'; i++) {
-    unsigned char c = (unsigned char)line[i];
-    if (!set[c]) {
-      set[c] = 1;
-      count++;
+  if (line == NULL || *line == '\0') {
+    return 0;
+  }
+  
+  int count = 0;
+  int length = strlen(line);
+  
+  for (int i = 0; i < length; i++) {
+    int is_unique = 1;
+    for (int j = 0; j < length; j++) {
+      if (i != j && line[i] == line[j]) {
+        is_unique = 0; 
+        break;
+      }
+    }
+    
+    if (is_unique) {
+        count++;
     }
   }
-
+  
   return count;
 }
 
