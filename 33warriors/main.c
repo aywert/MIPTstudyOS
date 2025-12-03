@@ -9,13 +9,13 @@
 #include <sys/wait.h>
 
 enum message_type {
-  NO_MSG = 0,
   TERMINATE_MSG = 1, 
   REQUEST_MSG = 2,
   ACCEPT_MSG = 3,
   REJECT_MSG = 4,
   COMMIT_MSG = 5,
-  NO_COMMIT_MSG = 6,
+  START_MSG  = 6,
+  //NO_COMMIT_MSG = 6,
 };
 
 enum letter_status {
@@ -51,6 +51,8 @@ struct warrior_state {
   int* queue_array;
   int queue_id;
   pid_t my_pid;
+  bool got_permission;
+  bool running;
 };
 
 #define FAILURE_STATUS -1
@@ -77,6 +79,9 @@ int main(int argc, char* argv[]) {
   int* queue_array = (int*)calloc(letters, sizeof(int));
   init_warriors(letters, queue_array, argv[1]);
 
+  printf("warrior_inited\n");
+  sleep(1);
+  broadcast(queue_array, letters, START_MSG, '\0', 0, 0);
   for (int j = 0; j < letters; j++)
     wait(NULL);
 
@@ -100,8 +105,10 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
   st.queue_array = queue_array;
   st.queue_id = queue_id;
   st.warriror_status = not_taken;
+  st.got_permission = false;
   st.warriors_num    = warriors_num;
   st.active_warriors = warriors_num;
+  st.running = true;
 
   for (int i = 0; i < 64; i++)
     st.my_positions[i] = -1; 
@@ -109,27 +116,22 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
   size_t index = 0;
   struct msgbuf msg = {};
     
-  bool running = true;
-  while (running) {
+  
+  while (st.running) {
     int ret = msgrcv(queue_id, &msg, sizeof(struct msgbuf) - sizeof(long), 0, IPC_NOWAIT);
 
     if (ret != -1) {
       process_message(&msg, &st);
-
-      if (msg.mtype == TERMINATE_MSG) {
-        running = 0;
-      }
     }
     else if (errno != ENOMSG) {
       perror("msgrcv");
-      running = 0;
+      st.running = 0;
     }
-    else if (st.my_letter == '\0' && st.warriror_status != requested) {
+    else if (st.my_letter == '\0' && st.warriror_status != requested && st.got_permission) {
+      printf("i am %d my status %d my letter %c\n", st.queue_id, st.warriror_status, st.my_letter);
       while (st.complex_song[index].status != not_taken && index < warriors_num) {
         index++; 
       }
-
-      
 
       st.warriror_status = requested;
       st.complex_song[index].status = requested;
@@ -151,9 +153,21 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
   switch(msg->mtype) {
     case REQUEST_MSG: {
       if (st->my_letter == msg->letter || (st->complex_song[msg->position].status == commited) 
-                                       || (st->complex_song[msg->position].status == accepted)) {
+                                       || (st->complex_song[msg->position].status == accepted)
+                                       ) {
         st->complex_song[msg->position].status = rejected;
         send_message(msg->queue_id, st->queue_id, REJECT_MSG, msg->letter, msg->position);
+      }
+      else if (st->complex_song[msg->position].status == requested) {
+        if (msg->queue_id < st->queue_id) {
+          st->complex_song[msg->position].status = accepted;
+          send_message(msg->queue_id, st->queue_id, ACCEPT_MSG, msg->letter, msg->position);
+        }
+
+        else {
+          st->complex_song[msg->position].status = rejected;
+          send_message(msg->queue_id, st->queue_id, REJECT_MSG, msg->letter, msg->position);
+        }
       }
       else {
         st->complex_song[msg->position].status = accepted;
@@ -168,6 +182,7 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
         if (st->complex_song[msg->position].replies == st->warriors_num-1) {
           st->complex_song[msg->position].replies = 0;
           st->complex_song[msg->position].status = commited;
+          st->active_warriors--;
           st->my_letter = msg->letter;
           st->my_positions[st->index_of_the_last_position++] = msg->position;
           printf("Warrior %d: my letter %c on positions: %d\n", st->queue_id, st->my_letter, st->my_positions[0]);
@@ -182,8 +197,10 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
     }
 
     case REJECT_MSG: {
+      printf("status = %d\n", st->complex_song[msg->position].status);
       if (st->complex_song[msg->position].status == requested || 
-         (st->complex_song[msg->position].status == rejected)) {
+         (st->complex_song[msg->position].status == rejected) ||
+         (st->complex_song[msg->position].status == accepted)) {
         st->complex_song[msg->position].replies++;
         if (st->complex_song[msg->position].replies == st->warriors_num-1) {
           st->complex_song[msg->position].status = rejected;
@@ -193,7 +210,7 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
       }
 
        else {
-        printf("AAAAAAAA we are dying\n Non-requested letter got message rejected\n");
+        printf("Warrior %d: AAAAAAAA we are dying\n Non-requested letter got message rejected\n", st->queue_id);
       }
       break;
     }
@@ -206,9 +223,22 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
       printf("Warrior %d number of warriors: %zu\n", st->queue_id, st->active_warriors);
       if (st->active_warriors == 0) {
         broadcast(st->queue_array, st->warriors_num, TERMINATE_MSG, '\0', st->queue_id, -1);
-        send_message(msg->queue_id, st->queue_id, TERMINATE_MSG, '\0', -1);
+        send_message(st->queue_id, st->queue_id, TERMINATE_MSG, '\0', -1);
       }
+
+      printf("got out of COMMIT\n");
         
+      break;
+    }
+
+    case START_MSG: {
+      st->got_permission = true;
+      break;
+    }
+
+    case TERMINATE_MSG: {
+      st->running = false;
+      st->got_permission = false;
       break;
     }
 
@@ -233,8 +263,10 @@ int create_queue(key_t key, int msgflg) {
 
 void init_warriors(int N, int* queue_array, char* song) {
   for (int i = 0; i < N; i++) {
-    //char
     queue_array[i] = create_queue(ftok("main.c", i), IPC_CREAT|0666);
+  }
+
+  for (int i = 0; i < N; i++) {
     pid_t pid = fork();
 
     if (pid == -1) {
@@ -246,9 +278,11 @@ void init_warriors(int N, int* queue_array, char* song) {
       warrior(queue_array[i], queue_array, song, N);
       printf("i am here\n");
       msgctl(queue_array[i], IPC_RMID, NULL); // deleting queue
-      return;
+      exit(0);
     }
   } 
+
+  sleep(1);
   
   return;
 }
@@ -279,6 +313,7 @@ void send_message(int queue_id_to, int queue_id_from, int msg_type, char letter,
   struct msgbuf buf = {.mtype = msg_type, .letter = letter, .queue_id = queue_id_from, .position = position};
   printf("Message:\nmtype = %d\n char = %c\n position = %d\n queue_id_from = %d\n queue_id_to = %d\n---------\n", 
           msg_type, letter, position, queue_id_from,  queue_id_to);
+  fflush(stdout);
   if (msgsnd(queue_id_to, &buf, sizeof(struct msgbuf) - sizeof(long), 0) == -1) {
     fprintf(stderr, "Failed to send message: %s\n", strerror(errno));
     exit(FAILURE_STATUS); 
