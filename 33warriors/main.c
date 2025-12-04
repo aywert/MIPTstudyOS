@@ -64,7 +64,7 @@ int create_queue(key_t key, int msgflg);
 void init_warriors(int N, int* queue_array, char* song);
 int count_letters(char* line);
 
-
+bool is_letter_busy(struct warrior_state* st, char letter, size_t position);
 void send_message(int queue_id_to, int queue_id_from, int msg_type, char letter, int position);
 void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, int queue_id, size_t position);
 
@@ -146,7 +146,9 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
       sleep(1);
     }
 
+    
     if (st.active_warriors == 0) {
+      //sleep(2);
       broadcast(st.queue_array, st.warriors_num, TERMINATE_MSG, '\0', st.queue_id, -1);
       st.running = false;
     }
@@ -160,7 +162,15 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
 void process_message(struct msgbuf* msg, struct warrior_state* st) {
   switch(msg->mtype) {
     case REQUEST_MSG: {
-      if (st->my_letter == msg->letter || (st->complex_song[msg->position].status == commited)) {
+      if (st->complex_song[msg->position].status == commited || is_letter_busy(st, msg->letter, msg->position)) {
+        if (st->complex_song[msg->position].status != requested) {
+          st->complex_song[msg->position].status = rejected;
+        }
+        send_message(msg->queue_id, st->queue_id, REJECT_MSG, msg->letter, msg->position);
+      }
+        
+      else if (st->my_letter == msg->letter) {
+         //(st->my_positions[0]!=-1? (st->complex_song[st->my_positions[0]].status != requested) : false)*/ {
         if (st->complex_song[msg->position].status != requested) {
           st->complex_song[msg->position].status = rejected;
         }
@@ -184,9 +194,10 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
       break;
     }
     case ACCEPT_MSG: {
-      printf("ACCEPT: status = %d\n", st->complex_song[msg->position].status);
+      //printf("ACCEPT: status = %d\n", st->complex_song[msg->position].status);
       if (st->complex_song[msg->position].status == requested || 
-          st->complex_song[msg->position].status == rejected) {
+          st->complex_song[msg->position].status == rejected ||
+          st->complex_song[msg->position].status == accepted) {
         st->complex_song[msg->position].replies++;
         if (st->complex_song[msg->position].replies == st->warriors_num-1) {
           if (st->complex_song[msg->position].status == rejected) {
@@ -207,7 +218,6 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
           // }
           // else {
           broadcast(st->queue_array, st->warriors_num, COMMIT_MSG, msg->letter, st->queue_id, msg->position);
-          //send_message(msg->queue_id, st->queue_id, COMMIT_MSG, msg->letter, msg->position);
           // }
           
         }
@@ -220,9 +230,10 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
     }
 
     case REJECT_MSG: {
-      printf("REJECT: status = %d\n", st->complex_song[msg->position].status);
+      //printf("REJECT: status = %d\n", st->complex_song[msg->position].status);
       if (st->complex_song[msg->position].status == requested || 
-          st->complex_song[msg->position].status == rejected) {
+          st->complex_song[msg->position].status == rejected || 
+          st->complex_song[msg->position].status == accepted) {
         st->complex_song[msg->position].status = rejected;
         st->complex_song[msg->position].replies++;
         if (st->complex_song[msg->position].replies == st->warriors_num-1) {
@@ -315,16 +326,15 @@ int count_letters(char* line) {
   int length = strlen(line);
   
   for (int i = 0; i < length; i++) {
-    int is_unique = 1;
-    for (int j = 0; j < length; j++) {
-      if (i != j && line[i] == line[j]) {
-        is_unique = 0; 
+    int found = 0;
+    for (int j = 0; j < i; j++) {
+      if (line[i] == line[j]) {
+        found = 1;
         break;
       }
     }
-    
-    if (is_unique) {
-        count++;
+    if (!found) {
+      count++;
     }
   }
   
@@ -340,9 +350,9 @@ void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, in
 
 void send_message(int queue_id_to, int queue_id_from, int msg_type, char letter, int position) {
   struct msgbuf buf = {.mtype = msg_type, .letter = letter, .queue_id = queue_id_from, .position = position};
-  printf("Message:\nmtype = %d\n char = %c\n position = %d\n queue_id_from = %d\n queue_id_to = %d\n---------\n", 
-          msg_type, letter, position, queue_id_from,  queue_id_to);
-  fflush(stdout);
+  // printf("Message:\nmtype = %d\n char = %c\n position = %d\n queue_id_from = %d\n queue_id_to = %d\n---------\n", 
+  //         msg_type, letter, position, queue_id_from,  queue_id_to);
+  // fflush(stdout);
   if (msgsnd(queue_id_to, &buf, sizeof(struct msgbuf) - sizeof(long), 0) == -1) {
     fprintf(stderr, "Failed to send message: %s\n", strerror(errno));
     exit(FAILURE_STATUS); 
@@ -351,3 +361,14 @@ void send_message(int queue_id_to, int queue_id_from, int msg_type, char letter,
   return;
 }
 
+bool is_letter_busy(struct warrior_state* st, char letter, size_t position) {
+  bool is_busy = false;
+  for (size_t i = 0; i < st->warriors_num; i++) {
+    if (i != position && st->complex_song[i].letter == letter && (st->complex_song[i].status == commited ||
+                                                 st->complex_song[i].status == requested )) {
+      is_busy = true;
+    }
+  }
+
+  return is_busy;
+}
