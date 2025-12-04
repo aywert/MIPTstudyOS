@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/sem.h>
 
 enum message_type {
   TERMINATE_MSG = 1, 
@@ -15,7 +16,8 @@ enum message_type {
   REJECT_MSG = 4,
   COMMIT_MSG = 5,
   START_MSG  = 6,
-  //NO_COMMIT_MSG = 6,
+  SING_MSG = 7,
+  SUNG_MSG = 8,
 };
 
 enum letter_status {
@@ -24,6 +26,7 @@ enum letter_status {
   commited  = 2,
   accepted  = 3,
   rejected  = 4,
+  sung      = 5,
 };
 
 struct msgbuf {
@@ -44,29 +47,42 @@ struct warrior_state {
   struct letter_state complex_song[128];
   int warriror_status;
   size_t warriors_num;
+  int song_length;
   char my_letter;
   int my_positions[64];
   size_t index_of_the_last_position;
   size_t active_warriors;
   int* queue_array;
   int queue_id;
+  int semid;
   pid_t my_pid;
   bool got_permission;
   bool running;
+  bool singing_song;
 };
+
+struct sembuf P[] = {{0, -1, SEM_UNDO}};
+struct sembuf V[] = {{0,  1, SEM_UNDO}};
+
+struct sembuf P_song[] = {{1, -1, SEM_UNDO}};
+struct sembuf V_song[] = {{1,  1, SEM_UNDO}};
 
 #define FAILURE_STATUS -1
 #define SUCCESS_STATUS 1
 
 void process_message(struct msgbuf* msg, struct warrior_state* st);
-void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num);
+void warrior(int queue_id, int* queue_array, char* song, int semid, size_t warriors_num);
 int create_queue(key_t key, int msgflg);
-void init_warriors(int N, int* queue_array, char* song);
+void init_warriors(int N, int* queue_array, int semid, char* song);
 int count_letters(char* line);
 
 bool is_letter_busy(struct warrior_state* st, char letter, size_t position);
 void send_message(int queue_id_to, int queue_id_from, int msg_type, char letter, int position);
-void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, int queue_id, size_t position);
+void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, int queue_id, int semid, size_t position);
+
+int create_semaphore(const char* name, int flags);
+void delete_semaphore(int semid);
+void RunOp_safe(int semid, struct sembuf *op, size_t nop);
 
 int main(int argc, char* argv[]) {
 
@@ -78,19 +94,29 @@ int main(int argc, char* argv[]) {
   int letters = count_letters(argv[1]);
   printf("letter count = %d\n", letters);
   int* queue_array = (int*)calloc(letters, sizeof(int));
-  init_warriors(letters, queue_array, argv[1]);
+  int semid = create_semaphore("main.c", IPC_CREAT);
+  init_warriors(letters, queue_array, semid, argv[1]);
 
   printf("warrior_inited\n");
   sleep(1);
-  broadcast(queue_array, letters, START_MSG, '\0', 0, 0);
+  broadcast(queue_array, letters, START_MSG, '\0', 0, semid, 0);
+
   for (int j = 0; j < letters; j++)
     wait(NULL);
+
+  for (int i = 0; i < letters; i++) {
+    if (msgctl(queue_array[i], IPC_RMID, NULL) < 0) {
+      perror("mistake in closing messages queuess");
+    }
+  }
+
+  delete_semaphore(semid);
 
   free(queue_array);
   return 0;
 }
 
-void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
+void warrior(int queue_id, int* queue_array, char* song, int semid, size_t warriors_num) {
   
   struct warrior_state st;
 
@@ -105,11 +131,14 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
   st.my_letter = '\0';
   st.queue_array = queue_array;
   st.queue_id = queue_id;
+  st.semid = semid;
   st.warriror_status = not_taken;
   st.got_permission = false;
-  st.warriors_num    = warriors_num;
+  st.warriors_num   = warriors_num;
+  st.song_length = strlen(song);
   st.active_warriors = warriors_num;
   st.running = true;
+  st.singing_song = false;
 
   for (int i = 0; i < 64; i++)
     st.my_positions[i] = -1; 
@@ -138,7 +167,7 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
 
       st.warriror_status = requested;
       st.complex_song[index].status = requested;
-      broadcast(queue_array, warriors_num, REQUEST_MSG, st.complex_song[index].letter, queue_id, index);
+      broadcast(queue_array, warriors_num, REQUEST_MSG, st.complex_song[index].letter, queue_id, semid, index);
       
       if (index == warriors_num-1) 
         index = 0;
@@ -147,10 +176,26 @@ void warrior(int queue_id, int* queue_array, char* song, size_t warriors_num) {
     }
 
     
-    if (st.active_warriors == 0) {
-      //sleep(2);
-      broadcast(st.queue_array, st.warriors_num, TERMINATE_MSG, '\0', st.queue_id, -1);
-      st.running = false;
+    // else if (st.active_warriors == 0 && st.singing_song == false) {
+    //   // broadcast(st.queue_array, st.warriors_num, TERMINATE_MSG, '\0', st.queue_id, semid, -1);
+    //   // st.running = false;
+    //   //printf("Warriors are now going to sing a song for you. BEHOLD: \n");
+    //   RunOp_safe(semid, P_song, 1);
+    //   printf("i am a single proc\n");
+    //   st.singing_song = true;
+      
+    //   RunOp_safe(semid, V_song, 1);
+    // }
+
+    if (st.active_warriors == 0 && !st.singing_song) {
+      if (st.my_positions[0] == 0) {
+        st.singing_song = true;
+        putchar(st.my_letter); fflush(stdout);
+        st.complex_song[0].status = sung;
+        broadcast(st.queue_array, st.warriors_num, SUNG_MSG, st.complex_song[0].letter, st.queue_id, st.semid, 0);
+        broadcast(st.queue_array, st.warriors_num, SING_MSG, st.complex_song[1].letter, st.queue_id, semid, 1);
+        send_message(st.queue_id, st.queue_id, SING_MSG, st.complex_song[msg.position + 1].letter, msg.position + 1);
+      }   
     }
   }
 
@@ -217,7 +262,7 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
           //   send_message(st->queue_id, st->queue_id, TERMINATE_MSG, '\0', -1);
           // }
           // else {
-          broadcast(st->queue_array, st->warriors_num, COMMIT_MSG, msg->letter, st->queue_id, msg->position);
+          broadcast(st->queue_array, st->warriors_num, COMMIT_MSG, msg->letter, st->queue_id, st->semid,  msg->position);
           // }
           
         }
@@ -252,12 +297,32 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
       st->complex_song[msg->position].letter = msg->letter;
       st->complex_song[msg->position].status = commited;
       st->active_warriors--;
+      break;
+    }
 
-      // if (st->active_warriors == 0) {
-      //   broadcast(st->queue_array, st->warriors_num, TERMINATE_MSG, '\0', st->queue_id, -1);
-      //   send_message(st->queue_id, st->queue_id, TERMINATE_MSG, '\0', -1);
-      // }
+    case SING_MSG: {
+      if (st->singing_song == false)
+        st->singing_song = true;
 
+      if (msg->position == st->song_length && st->complex_song[msg->position-1].status == sung) {
+        broadcast(st->queue_array, st->warriors_num, TERMINATE_MSG, '\0', st->queue_id, st->semid, -1);
+        send_message(st->queue_id, st->queue_id, TERMINATE_MSG, '\0', -1);
+      }
+
+      else if (msg->position == st->my_positions[0] || msg->letter == st->my_letter) {
+        st->complex_song[msg->position].status = sung;
+        putchar(st->my_letter); fflush(stdout);
+
+        broadcast(st->queue_array, st->warriors_num, SUNG_MSG, st->complex_song[msg->position].letter, st->queue_id, st->semid, msg->position);
+        broadcast(st->queue_array, st->warriors_num, SING_MSG, st->complex_song[msg->position + 1].letter, st->queue_id, st->semid, msg->position + 1);
+        send_message(st->queue_id, st->queue_id, SING_MSG, st->complex_song[msg->position + 1].letter, msg->position + 1);
+      }
+       
+      break;
+    }
+
+    case SUNG_MSG: {
+      st->complex_song[msg->position].status = sung;
       break;
     }
 
@@ -291,7 +356,7 @@ int create_queue(key_t key, int msgflg) {
   return queue_id; 
 }
 
-void init_warriors(int N, int* queue_array, char* song) {
+void init_warriors(int N, int* queue_array, int semid, char* song) {
   for (int i = 0; i < N; i++) {
     queue_array[i] = create_queue(ftok("main.c", i), IPC_CREAT|0666);
   }
@@ -305,10 +370,9 @@ void init_warriors(int N, int* queue_array, char* song) {
     }
 
     if (pid == 0) {
-      warrior(queue_array[i], queue_array, song, N);
-      printf("i am here\n");
-      msgctl(queue_array[i], IPC_RMID, NULL); // deleting queue
+      warrior(queue_array[i], queue_array, song, semid, N);
       exit(0);
+      break;
     }
   } 
 
@@ -341,11 +405,13 @@ int count_letters(char* line) {
   return count;
 }
 
-void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, int queue_id, size_t position) {
+void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, int queue_id, int semid, size_t position) {
+  RunOp_safe(semid, P, 1);
   for (size_t i = 0; i < array_len; i++) {
     if (queue_array[i] != 0 && queue_array[i] != queue_id)
       send_message(queue_array[i], queue_id, msg_type, letter, position);
   }
+  RunOp_safe(semid, V, 1);
 }
 
 void send_message(int queue_id_to, int queue_id_from, int msg_type, char letter, int position) {
@@ -371,4 +437,37 @@ bool is_letter_busy(struct warrior_state* st, char letter, size_t position) {
   }
 
   return is_busy;
+}
+
+void delete_semaphore(int semid) {
+  if (semctl(semid, IPC_RMID, 0) < 0) {
+    perror("unable to delete semaphore\n");
+    exit(EXIT_FAILURE);
+  }
+
+  printf("Semaphore is deleted\n");
+}
+
+int create_semaphore(const char* name, int flags) {
+  //|able_to_broadcast|song|
+  int semid = semget(ftok(name, 1), 2, flags | 0644);
+  if (semid == -1) {
+    perror("unable to create semphore\n");
+    exit(EXIT_FAILURE);
+  }
+
+  semctl(semid, 0, SETVAL, 1);
+  semctl(semid, 1, SETVAL, 1); 
+  
+  printf("Semaphore is created\n");
+
+  return semid;
+}
+
+
+void RunOp_safe(int semid, struct sembuf *op, size_t nop) {
+  if (semop(semid, op, nop) < 0) {
+    perror("semop RunOp error");
+    exit(EXIT_FAILURE);
+  }
 }
