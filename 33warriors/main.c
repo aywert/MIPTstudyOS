@@ -95,6 +95,7 @@ int main(int argc, char* argv[]) {
   printf("letter count = %d\n", letters);
   int* queue_array = (int*)calloc(letters, sizeof(int));
   int semid = create_semaphore("main.c", IPC_CREAT);
+  memset(queue_array, -1, letters*sizeof(int));
   init_warriors(letters, queue_array, semid, argv[1]);
 
   printf("warrior_inited\n");
@@ -408,7 +409,7 @@ int count_letters(char* line) {
 void broadcast(int* queue_array, size_t array_len, int msg_type, char letter, int queue_id, int semid, size_t position) {
   RunOp_safe(semid, P, 1);
   for (size_t i = 0; i < array_len; i++) {
-    if (queue_array[i] != 0 && queue_array[i] != queue_id)
+    if (queue_array[i] != -1 && queue_array[i] != queue_id)
       send_message(queue_array[i], queue_id, msg_type, letter, position);
   }
   RunOp_safe(semid, V, 1);
