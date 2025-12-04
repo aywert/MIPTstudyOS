@@ -15,9 +15,10 @@ enum message_type {
   ACCEPT_MSG = 3,
   REJECT_MSG = 4,
   COMMIT_MSG = 5,
-  START_MSG  = 6,
-  SING_MSG = 7,
-  SUNG_MSG = 8,
+  PHANTOM_MSG = 6,
+  START_MSG  = 7,
+  SING_MSG = 8,
+  SUNG_MSG = 9,
 };
 
 enum letter_status {
@@ -75,6 +76,7 @@ void warrior(int queue_id, int* queue_array, char* song, int semid, size_t warri
 int create_queue(key_t key, int msgflg);
 void init_warriors(int N, int* queue_array, int semid, char* song);
 int count_letters(char* line);
+int random_in_range(int min, int max);
 
 bool is_letter_busy(struct warrior_state* st, char letter, size_t position);
 void send_message(int queue_id_to, int queue_id_from, int msg_type, char letter, int position);
@@ -190,12 +192,14 @@ void warrior(int queue_id, int* queue_array, char* song, int semid, size_t warri
 
     if (st.active_warriors == 0 && !st.singing_song) {
       if (st.my_positions[0] == 0) {
-        st.singing_song = true;
-        putchar(st.my_letter); fflush(stdout);
-        st.complex_song[0].status = sung;
-        broadcast(st.queue_array, st.warriors_num, SUNG_MSG, st.complex_song[0].letter, st.queue_id, st.semid, 0);
-        broadcast(st.queue_array, st.warriors_num, SING_MSG, st.complex_song[1].letter, st.queue_id, semid, 1);
-        send_message(st.queue_id, st.queue_id, SING_MSG, st.complex_song[msg.position + 1].letter, msg.position + 1);
+        broadcast(st.queue_array, st.warriors_num, TERMINATE_MSG, '\0', st.queue_id, st.semid, -1);
+        send_message(st.queue_id, st.queue_id, TERMINATE_MSG, '\0', -1);
+        // st.singing_song = true;
+        // putchar(st.my_letter); fflush(stdout);
+        // st.complex_song[0].status = sung;
+        // broadcast(st.queue_array, st.warriors_num, SUNG_MSG, st.complex_song[0].letter, st.queue_id, st.semid, 0);
+        // broadcast(st.queue_array, st.warriors_num, SING_MSG, st.complex_song[1].letter, st.queue_id, semid, 1);
+        // send_message(st.queue_id, st.queue_id, SING_MSG, st.complex_song[msg.position + 1].letter, msg.position + 1);
       }   
     }
   }
@@ -268,6 +272,12 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
           
         }
       }
+
+      else if (st->complex_song[msg->position].status == commited) { 
+        st->complex_song[msg->position].replies = 0;
+        st->warriror_status = rejected;
+        printf("WENT WRONG Msg letter = %c but my_letter = %c position = %d\n", msg->letter, st->my_letter, msg->position);
+      }
       
       else {
         printf("AAAAAAAA we are dying\n Non-requested letter got message accepted\n");
@@ -288,6 +298,13 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
         }
       }
 
+      else if (st->complex_song[msg->position].status == commited) { 
+        //ignoring forgetted requests
+        st->complex_song[msg->position].replies = 0;
+        st->warriror_status = rejected;
+        printf("WENT WRONG Msg letter = %c but my_letter = %c position = %d\n", msg->letter, st->my_letter, msg->position);
+      }
+
        else {
         printf("Warrior %d: AAAAAAAA we are dying\n Non-requested letter got message rejected\n", st->queue_id);
       }
@@ -295,6 +312,14 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
     }
 
     case COMMIT_MSG: {
+      if (st->my_letter == msg->letter) {
+        break;
+      }
+      
+      if (st->complex_song[msg->position].status == commited) {
+        send_message(msg->queue_id, st->queue_id, PHANTOM_MSG, msg->letter, msg->position);
+      }
+
       st->complex_song[msg->position].letter = msg->letter;
       st->complex_song[msg->position].status = commited;
       st->active_warriors--;
@@ -319,6 +344,20 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
         send_message(st->queue_id, st->queue_id, SING_MSG, st->complex_song[msg->position + 1].letter, msg->position + 1);
       }
        
+      break;
+    }
+
+    case PHANTOM_MSG: {
+      st->complex_song[msg->position].replies++;
+      if (st->complex_song[msg->position].replies == st->warriors_num-1) { 
+        st->complex_song[msg->position].replies = 0;
+        st->active_warriors++;
+        st->my_letter = '\0';
+        st->my_positions[0] = -1;
+        st->index_of_the_last_position--; 
+        st->warriror_status = rejected;
+      }
+
       break;
     }
 
@@ -471,4 +510,8 @@ void RunOp_safe(int semid, struct sembuf *op, size_t nop) {
     perror("semop RunOp error");
     exit(EXIT_FAILURE);
   }
+}
+
+int random_in_range(int min, int max) {
+    return min + rand() % (max - min + 1);
 }
