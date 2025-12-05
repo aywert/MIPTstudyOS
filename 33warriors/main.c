@@ -312,12 +312,11 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
     }
 
     case COMMIT_MSG: {
-      if (st->my_letter == msg->letter) {
-        break;
-      }
-      
-      if (st->complex_song[msg->position].status == commited) {
+      if (st->complex_song[msg->position].status == commited && msg->letter == st->my_letter) {
+        printf("Message is sent ---------%c------------------%C--------------!!!!!!!!!!!!!!!\n", st->my_letter, msg->letter);
+        fflush(stdout);
         send_message(msg->queue_id, st->queue_id, PHANTOM_MSG, msg->letter, msg->position);
+        break;
       }
 
       st->complex_song[msg->position].letter = msg->letter;
@@ -348,15 +347,13 @@ void process_message(struct msgbuf* msg, struct warrior_state* st) {
     }
 
     case PHANTOM_MSG: {
-      st->complex_song[msg->position].replies++;
-      if (st->complex_song[msg->position].replies == st->warriors_num-1) { 
-        st->complex_song[msg->position].replies = 0;
-        st->active_warriors++;
-        st->my_letter = '\0';
-        st->my_positions[0] = -1;
-        st->index_of_the_last_position--; 
-        st->warriror_status = rejected;
-      }
+      
+      st->complex_song[msg->position].replies = 0;
+      st->active_warriors++;
+      st->my_letter = '\0';
+      st->my_positions[0] = -1;
+      st->index_of_the_last_position--; 
+      st->warriror_status = rejected;
 
       break;
     }
