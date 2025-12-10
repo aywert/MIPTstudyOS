@@ -9,12 +9,14 @@
 struct monitor_t {
   pthread_mutex_t mtx;
   pthread_cond_t cond; //сигнализиурет о том, что начался новый день
-  pthread_cond_t cond_replied;
+  pthread_cond_t cond_return; // сигнализирует о том, что охотники закончили охоту
+  pthread_cond_t cond_sleep;
 
   int time_of_the_day;
   int num_of_conibals;
   int* hunters_status;
-  int num_of_replies;
+  int hunters_returned;
+  int hunters_slept;
 
   int food_pieces; // исмеряем количество еды в кусках
 };
@@ -52,6 +54,7 @@ int main (int argc, char* argv[]) {
   }
 
   int N = atoi(argv[1]);
+  srand(time(NULL));
 
   struct monitor_t monitor;
   monitor_init(&monitor, N);
@@ -60,10 +63,7 @@ int main (int argc, char* argv[]) {
   //запускаем конибалов (охотников и повора)
   init_canibals(N, &monitor, threads);
  
-  //ждем когда все потоки выйдут
-  for (int i = 0; i < N+1; i++) {
-    pthread_join(threads[i], NULL);
-  }
+
   printf("hello\n");
   monitor_destroy(&monitor);
 
@@ -71,22 +71,20 @@ int main (int argc, char* argv[]) {
 }
 
 void* canibals(void* arg) {
-  printf("canibals\n");
+  assert(arg);
   struct argument* st = (struct argument*) arg;
   struct monitor_t* monitor = st->monitor;
   int index_of_canibal = st->index;
 
   while(1) {
-    // Ждем когда будет день
+    //printf("here %d\n", st->index);
+    // Ждем начала день
     pthread_mutex_lock(&(monitor->mtx)); 
     while (monitor->time_of_the_day != IS_DAY) {
+      //printf("waiting for the day\n");
       pthread_cond_wait(&(monitor->cond), &(monitor->mtx));
     }
     pthread_mutex_unlock(&(monitor->mtx));
-
-    if (monitor->hunters_status[st->index]) {
-      pthread_exit(0);
-    }
 
     pthread_mutex_lock(&(monitor->mtx)); 
     if (get_food(monitor->hunters_status[index_of_canibal])) {
@@ -99,8 +97,35 @@ void* canibals(void* arg) {
       monitor->hunters_status[index_of_canibal] = HUNT_FAIL;
       printf("Conibal %d: didn`t find meat\n", index_of_canibal);
     }
+
+    monitor->hunters_returned++;
+    if (monitor->hunters_returned == monitor->num_of_conibals) {
+      pthread_cond_signal(&(monitor->cond_return));
+    }
     pthread_mutex_unlock(&(monitor->mtx)); 
 
+    //теперь он ждет окончания дня
+    pthread_mutex_lock(&(monitor->mtx)); 
+    while (monitor->time_of_the_day != IS_NIGHT) {
+      //printf("i am here waiting\n");
+      pthread_cond_wait(&(monitor->cond), &(monitor->mtx));
+    }
+
+    if (monitor->hunters_status[st->index] == HUNT_DEAD) {
+      //printf("Canibal %d is dead\n", st->index);
+      pthread_mutex_unlock(&(monitor->mtx));
+      pthread_exit(0);
+    }
+    
+    monitor->hunters_slept++;
+    // printf("Canibal %d\n", st->index);
+    // printf("monitor->num_of_conibals = %d\n", monitor->num_of_conibals);
+    // printf("monitor->hunters_slept = %d\n", monitor->hunters_slept);
+    if (monitor->hunters_slept == monitor->num_of_conibals) {
+      pthread_cond_signal(&(monitor->cond_sleep));
+    }
+
+    pthread_mutex_unlock(&(monitor->mtx));
   }
 
   printf("i am conibal\n");
@@ -109,70 +134,99 @@ void* canibals(void* arg) {
 
 
 void* cooker(void* arg) {
-  //printf("cooker\n");
+
+  assert(arg);
+  printf("cooker\n");
   struct argument* st = (struct argument*) arg;
-  pthread_t* threads = st->pthreads;
+  pthread_t* threads  = st->pthreads;
   struct monitor_t* monitor = st->monitor;
-  size_t index_of_the_day = 0;
+  int N = monitor->num_of_conibals;
+  size_t index_of_the_day = 1;
 
   while (monitor->num_of_conibals != 0) {
-    printf("Day Number %zu begins\n", index_of_the_day++);
+    printf("-----Day Number %zu begins-----\n", index_of_the_day++);
 
     pthread_mutex_lock(&(monitor->mtx));
+    monitor->time_of_the_day = IS_DAY;
     pthread_cond_broadcast(&(monitor->cond)); //наступил день
-    monitor->time_of_the_day = IS_NIGHT;
     pthread_mutex_unlock(&(monitor->mtx));
-
 
     // ждем пока все охотники вернуться с охоты
     pthread_mutex_lock(&(monitor->mtx));
-    while (monitor->num_of_replies != monitor->num_of_conibals) {
-      pthread_cond_wait(&(monitor->cond), &(monitor->mtx)); 
+    while (monitor->hunters_returned != monitor->num_of_conibals) {
+      pthread_cond_wait(&(monitor->cond_return), &(monitor->mtx)); 
     }
     pthread_mutex_unlock(&(monitor->mtx));
 
     //повар подходит к котлу и начинает распределять еду
+    printf("Distibuting food:\n");
     if (monitor->food_pieces == 0) {
-      printf("We are dead: 0 pieces of food\n");
+      printf("Cooker: nothing to take :(\n");
     }
-    
-    else {
-
-      int fed_canibals = 0;
+    else { 
       printf("Cooker: took 1 byte\n");
-      monitor->food_pieces--;
+      monitor->food_pieces--; 
+    }
 
-      //Сначала еду получают те, кто был успешен на охоте
-      for (int i = 0; i < monitor->num_of_conibals; i++) {
-        if (monitor->hunters_status[i] == HUNT_SUC) {
+    int fed_canibals = 0;
+
+    //Сначала еду получают те, кто был успешен на охоте
+    for (int i = 0; i < N; i++) {
+      if (monitor->hunters_status[i] == HUNT_SUC) {
+        if (monitor->food_pieces != 0) {
           printf("Canibal %d: took 1 byte\n", i);
           monitor->hunters_status[i] = HUNT_EAT; //отмечаем его как поевшего
           monitor->food_pieces--;
           fed_canibals++;
         }
+        else {
+          printf("Canibal %d: nothing to eat :(\n", i);
+          monitor->hunters_status[i] = HUNT_NOEAT;;
+        } 
       }
-
-      if (monitor->food_pieces > 0) {
-        for (int i = 0; i < monitor->num_of_conibals; i++) {
-          if (monitor->hunters_status[i] == HUNT_FAIL && monitor->food_pieces != 0) {
-            printf("Canibal %d: took 1 byte\n", i);
-            monitor->hunters_status[i] = HUNT_EAT; //отмечаем его как поевшего
-            monitor->food_pieces--;
-            fed_canibals++;
-          }
-        }
+    }
+    //теперь еду получают неудачливые охотники
+    for (int i = 0; i < N; i++) {
+      if (monitor->hunters_status[i] == HUNT_FAIL && monitor->food_pieces != 0) {
+        printf("Canibal %d: took 1 byte\n", i);
+        monitor->hunters_status[i] = HUNT_EAT; //отмечаем его как поевшего
+        monitor->food_pieces--;
+        fed_canibals++;
       }
-
-      if (fed_canibals != monitor->num_of_conibals) {
-        for (int i = 0; i < monitor->num_of_conibals; i++) {
-          if (monitor->hunters_status[i] == HUNT_FAIL) {
-            pthread_cancel(threads[i]);
-            monitor->hunters_status[i] = HUNT_DEAD;
-            monitor->num_of_conibals--;
-          }
+    }
+    //Все неудачливые канибалы, которым не достался кусок, зарезаны поваром
+    if (fed_canibals != monitor->num_of_conibals) {
+      for (int i = 0; i < N; i++) {
+        if (monitor->hunters_status[i] == HUNT_FAIL) {
+          printf("Canibal %d: got murdered\n", i);
+          monitor->hunters_status[i] = HUNT_DEAD;
+          monitor->num_of_conibals--;
         }
       }
     }
+
+    fed_canibals = 0;
+  
+
+  //Наступила ночь
+  printf("Night is set\n");
+  pthread_mutex_lock(&(monitor->mtx));
+    monitor->hunters_returned = 0;
+    monitor->time_of_the_day = IS_NIGHT;
+    pthread_cond_broadcast(&(monitor->cond));
+  pthread_mutex_unlock(&(monitor->mtx));
+
+  //Ждем сообщение от всех охотников, что они поспали
+  printf("Waiting for the hunters to wake up\n");
+  pthread_mutex_lock(&(monitor->mtx));
+  while (monitor->hunters_slept < monitor->num_of_conibals) {
+    pthread_cond_wait(&(monitor->cond_sleep), &(monitor->mtx)); 
+  }
+
+  monitor->hunters_slept = 0;
+  pthread_mutex_unlock(&(monitor->mtx));
+  printf("Everyone woke up. Should claim the beggining of the day\n");
+
   }
 
   return NULL;
@@ -184,10 +238,13 @@ void monitor_init(struct monitor_t* monitor, int num_of_conibals) {
 
   pthread_mutex_init(&(monitor->mtx), NULL);
   pthread_cond_init(&(monitor->cond), NULL);
-  pthread_cond_init(&(monitor->cond_replied), NULL);
+  pthread_cond_init(&(monitor->cond_return), NULL);
+  pthread_cond_init(&(monitor->cond_sleep), NULL);
 
   monitor->num_of_conibals = num_of_conibals;
-  monitor->num_of_replies = 0;
+  monitor->hunters_returned = 0;
+  monitor->hunters_slept = 0;
+  monitor->food_pieces = 0;
   monitor->time_of_the_day = IS_NIGHT;
   monitor->hunters_status = calloc(num_of_conibals, sizeof(int));
 
@@ -201,6 +258,8 @@ void monitor_init(struct monitor_t* monitor, int num_of_conibals) {
 void monitor_destroy(struct monitor_t* monitor) {
   assert(monitor);
 
+  pthread_cond_destroy(&(monitor->cond_return));
+  pthread_cond_destroy(&(monitor->cond_sleep));
   pthread_cond_destroy(&(monitor->cond));
   pthread_mutex_destroy(&(monitor->mtx));
 
@@ -209,9 +268,10 @@ void monitor_destroy(struct monitor_t* monitor) {
 }
 
 int init_canibals(int num_of_canibals, struct monitor_t* monitor, pthread_t* threads) {
+  struct argument* st_array = (struct argument*)calloc(num_of_canibals+1, sizeof(struct argument));
   for (int i = 0; i < num_of_canibals; i++) {
-    struct argument st = {.index = i, .monitor = monitor, .pthreads = threads}; 
-    if (pthread_create(&threads[i], NULL, canibals, &st) != 0) {
+    st_array[i].index = i; st_array[i].monitor = monitor; st_array[i].pthreads = threads; 
+    if (pthread_create(&threads[i], NULL, canibals, &st_array[i]) != 0) {
       perror("Failed to create thread");
       pthread_mutex_lock(&(monitor->mtx));
       pthread_cond_broadcast(&(monitor->cond));
@@ -226,12 +286,23 @@ int init_canibals(int num_of_canibals, struct monitor_t* monitor, pthread_t* thr
       return 0;
     }
   }
-  struct argument st = {.index = 0, .monitor = monitor, .pthreads = threads};
-  if (pthread_create(&threads[num_of_canibals], NULL, cooker, &st) != 0) {
+    st_array[num_of_canibals].index    = num_of_canibals; 
+    st_array[num_of_canibals].monitor  = monitor; 
+    st_array[num_of_canibals].pthreads = threads; 
+    if (pthread_create(&threads[num_of_canibals], NULL, cooker, &st_array[num_of_canibals]) != 0) {
     perror("Failed to create thread");
     return 0;
   }
 
+  printf("Canibals are initiated\n");
+
+  for (int i = 0; i < num_of_canibals+1; i++) {
+    pthread_join(threads[i], NULL);
+  }
+
+  free(st_array);
+
+  printf("Canibals left\n");
   return 0;
 } 
 
@@ -241,6 +312,8 @@ int get_food(int hunter_status) {
   }
 
   else {
-    return rand()%2;
+    int num = rand();
+    //printf("get_food = %d; %d\n", num, num%2);
+    return num%2;
   }
 }
