@@ -181,14 +181,14 @@ void warrior(int queue_id, int* queue_array, char* song, int semid, size_t warri
     
     if (/*st.active_warriors*/GetVal_safe(st.semid, 1) == 0 && !st.singing_song) {
       if (st.my_positions[0] == 0) {
-        broadcast(st.queue_array, st.warriors_num, TERMINATE_MSG, '\0', st.queue_id, st.semid, -1);
-        send_message(st.queue_id, st.queue_id, TERMINATE_MSG, '\0', -1);
-        // st.singing_song = true;
-        // putchar(st.my_letter); fflush(stdout);
-        // st.complex_song[0].status = sung;
-        // broadcast(st.queue_array, st.warriors_num, SUNG_MSG, st.complex_song[0].letter, st.queue_id, st.semid, 0);
-        // broadcast(st.queue_array, st.warriors_num, SING_MSG, st.complex_song[1].letter, st.queue_id, semid, 1);
-        // send_message(st.queue_id, st.queue_id, SING_MSG, st.complex_song[msg.position + 1].letter, msg.position + 1);
+        // broadcast(st.queue_array, st.warriors_num, TERMINATE_MSG, '\0', st.queue_id, st.semid, -1);
+        // send_message(st.queue_id, st.queue_id, TERMINATE_MSG, '\0', -1);
+        st.singing_song = true;
+        putchar(st.my_letter); fflush(stdout);
+        st.complex_song[0].status = sung;
+        broadcast(st.queue_array, st.warriors_num, SUNG_MSG, st.complex_song[0].letter, st.queue_id, st.semid, 0);
+        broadcast(st.queue_array, st.warriors_num, SING_MSG, st.complex_song[1].letter, st.queue_id, semid, 1);
+        send_message(st.queue_id, st.queue_id, SING_MSG, st.complex_song[msg.position + 1].letter, msg.position + 1);
       }   
     }
   }
@@ -455,7 +455,7 @@ bool is_letter_busy(struct warrior_state* st, char letter, size_t position) {
   bool is_busy = false;
   for (size_t i = 0; i < st->warriors_num; i++) {
     if (i != position && st->complex_song[i].letter == letter && (st->complex_song[i].status == commited ||
-                                                 st->complex_song[i].status == requested )) {
+                                                       st->complex_song[i].status == requested)) {
       is_busy = true;
     }
   }
@@ -502,7 +502,7 @@ int random_in_range(int min, int max) {
 
 bool check_if_all_commited(struct warrior_state* st, char letter) {
   bool is_commited = false;
-  for (size_t i = 0; i < st->song_length; i++) {
+  for (int i = 0; i < st->song_length; i++) {
     if (st->complex_song[i].letter == letter && st->complex_song[i].status == commited) {
       is_commited = true;
     }
