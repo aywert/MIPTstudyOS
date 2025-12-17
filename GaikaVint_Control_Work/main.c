@@ -37,6 +37,7 @@ void vint_worker(int semid, int num) {
   struct sembuf vint_P[] = {{0, -1, 0}};
   struct sembuf vint_V[] = {{0, 1, 0}};
   struct sembuf screw_Vint[] = {{1, -1, 0}};
+  struct sembuf wait[] = {{3, -1, 0}, {3, 1, 0}};
   bool need_to_work  = false;
   bool will_be_ready = false;
 
@@ -44,6 +45,7 @@ void vint_worker(int semid, int num) {
 
   while(done != details) {
     //sleep(1); // rest from hard work
+    RunOp_safe(semid, wait, 2);
     RunOp_safe(semid, vint_P, 1); //P()
     //printf("Vint worker %d: entered\n", num);
 
@@ -57,16 +59,24 @@ void vint_worker(int semid, int num) {
       RunOp_safe(semid, screw_Vint, 1); // decreases number of vint yet to screw
       need_to_work = true;
       done++;
-      if (vint-1 == 0 && gaika == 0) 
+      if (vint-1 == 0 && gaika == 0){
         will_be_ready = true;
+      }
+        
     }
-    else if (status) {
-      printf("Vint  worker %d: replaced constructed detail\n", num);
-      printf("-------Done: %d-------\n", done);
-      replace_detail(semid); 
-      RunOp_safe(semid, vint_V, 1); //V()
-      continue;
-    }
+    // else if (status) {
+    //   printf("Vint  worker %d: replaced constructed detail\n", num);
+    //   printf("-------Done: %d-------\n", done);
+    //   replace_detail(semid); 
+    //   RunOp_safe(semid, vint_V, 1); //V()
+    //   continue;
+    // }
+
+    // else {
+    //   RunOp_safe(semid, vint_V, 1);
+    //   RunOp_safe(semid, wait, 1);
+    //   RunOp_safe(semid, vint_P, 1);
+    // }
 
     RunOp_safe(semid, vint_V, 1); //V()
 
@@ -75,8 +85,10 @@ void vint_worker(int semid, int num) {
       sleep(1); //simulating work
 
       if (will_be_ready) {
+        printf("Vint worker %d: replaced constructed detail\n", num);
+        printf("-------Done: %d-------\n", done);
         will_be_ready = false;
-        SetVal_safe(semid, 3, 1);
+        replace_detail(semid);
       }
     }
   }
@@ -88,6 +100,7 @@ void gaika_worker(int semid, int num) {
   struct sembuf gaika_P[] = {{0, -1, 0}};
   struct sembuf gaika_V[] = {{0, 1, 0}};
   struct sembuf screw_Gaika[] = {{2, -1, 0}};
+  struct sembuf wait[] = {{3, -1, 0}, {3, 1, 0}};
   bool need_to_work  = false;
   bool will_be_ready = false;
 
@@ -96,11 +109,16 @@ void gaika_worker(int semid, int num) {
 
   while(done != details) {
     //sleep(1); //rest from hard work
+    RunOp_safe(semid, wait, 2);
     RunOp_safe(semid, gaika_P, 1); //P()
     //printf("Gaika worker %d: entered\n", num);
     int vint   = GetVal_safe(semid, 1);
     int gaika  = GetVal_safe(semid, 2);
     int status = GetVal_safe(semid, 3);
+
+    // if (status) {
+    //   
+    // }
     //printf("| %d | %d | %d |\n", vint, gaika, status);
     
     if (gaika != 0) {
@@ -108,16 +126,25 @@ void gaika_worker(int semid, int num) {
       RunOp_safe(semid, screw_Gaika, 1); // decreases number of vint yet to screw
       need_to_work = true;
       done++;
-      if (vint == 0 && gaika-1 == 0) 
+      if (vint == 0 && gaika-1 == 0) {
         will_be_ready = true;
+        SetVal_safe(semid, 3, 0);
+      } 
     }
-    else if (status) {
-      printf("Gaika worker %d: replaced constructed detail\n", num);
-      printf("-------Done: %d-------\n", done);
-      replace_detail(semid); 
-      RunOp_safe(semid, gaika_V, 1); //V()
-      continue;
-    }
+
+    // else if (status) {
+    //   printf("Gaika worker %d: replaced constructed detail\n", num);
+    //   printf("-------Done: %d-------\n", done);
+    //   replace_detail(semid); 
+    //   RunOp_safe(semid, gaika_V, 1); //V()
+    //   continue;
+    // }
+
+    // else {
+    //   RunOp_safe(semid, gaika_V, 1);
+    //   RunOp_safe(semid, wait, 1);
+    //   RunOp_safe(semid, gaika_P, 1);
+    // }
 
     RunOp_safe(semid, gaika_V, 1); //V()
 
@@ -127,7 +154,9 @@ void gaika_worker(int semid, int num) {
 
       if (will_be_ready) {
         will_be_ready = false;
-        SetVal_safe(semid, 3, 1);
+        printf("Gaika worker %d: replaced constructed detail\n", num);
+        printf("-------Done: %d-------\n", done);
+        replace_detail(semid);
       }
     }
   }
@@ -136,5 +165,5 @@ void gaika_worker(int semid, int num) {
 void replace_detail(int semid) {
   SetVal_safe(semid, 1, 2); //vint  = 2
   SetVal_safe(semid, 2, 1); //gaika = 1
-  SetVal_safe(semid, 3, 0);  //Ready = 0
+  SetVal_safe(semid, 3, 1); //Ready = 0
 }

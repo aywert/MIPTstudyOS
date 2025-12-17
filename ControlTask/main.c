@@ -10,7 +10,7 @@ struct monitor_t {
   pthread_mutex_t mtx;
   pthread_cond_t cond; //сигнализиурет о том, что начался новый день
   pthread_cond_t cond_return; // сигнализирует о том, что охотники закончили охоту
-  pthread_cond_t cond_sleep;
+  pthread_cond_t cond_sleep; // сигнализирует о том, что все охотники поспали
 
   int time_of_the_day;
   int num_of_conibals;

@@ -36,7 +36,7 @@ void RunOp_safe(int semid, struct sembuf *op, size_t nop) {
 }
 
 int create_semaphore(const char* name, int flags) {
-  // sem_array = | Able_to_enter | Vint | Gaika | Ready | 
+  // sem_array = | Able_to_enter | Vint | Gaika | Ready |
   int semid = semget(ftok(name, 1), 4, flags);
   if (semid == -1) {
     perror("unable to create semphore\n");
@@ -46,7 +46,7 @@ int create_semaphore(const char* name, int flags) {
   semctl(semid, 0, SETVAL, 1);
   semctl(semid, 1, SETVAL, 2);
   semctl(semid, 2, SETVAL, 1);
-  semctl(semid, 3, SETVAL, 0);
+  semctl(semid, 3, SETVAL, 1);
   
   printf("Semaphore is created\n");
 
